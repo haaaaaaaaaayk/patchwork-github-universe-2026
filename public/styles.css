@@ -218,7 +218,9 @@ body.has-results .hero-art { height: 132px; }
 .recap-relevance.is-match { background: #eaf6ba; }
 
 /* The query is read, not skimmed: let it scroll rather than wrap mid-statement. */
-#query-code { overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; }
+/* The query is the proof, so it must be readable in full on screen rather than
+   scrolled off the right edge. Wrap, but keep the indentation. */
+#query-code { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 42vh; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1.6; }
 #graph-results { white-space: pre-wrap; }
 
 .also-meet { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
