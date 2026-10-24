@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f4f0" />
+    <title>Patchwork — make the rooms between talks count</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail">
+        <a class="brand" href="#top" aria-label="Patchwork home"><span class="brand-mark">p</span><span>patchwork</span></a>
+        <div class="rail-label">YOUR SPACE</div>
+        <button class="rail-item active"><span class="rail-icon">✳</span><span>Conference guide</span></button>
+        <button class="rail-item" id="saved-nav"><span class="rail-icon">⌑</span><span>Saved people</span><span class="rail-count" id="saved-count">0</span></button>
+        <div class="rail-spacer"></div>
+        <div class="rail-event"><span class="live-dot"></span><span>DEMO EVENT</span><strong id="rail-event-name">GitHub Universe ’26</strong><small>Oct 28–29 · San Francisco</small></div>
+        <div class="rail-foot"><span class="avatar-small">Y</span><span><b>Your profile</b><small>Private by default</small></span><span class="more">···</span></div>
+      </aside>
+
+      <main class="main" id="top">
+        <header class="topbar">
+          <div class="crumb">YOUR CONFERENCE <span>/</span> <b id="top-event-name">GITHUB UNIVERSE 2026</b></div>
+          <div class="top-actions"><span class="data-state"><i class="state-dot"></i><span id="data-state-label">SAMPLE DATA</span></span><button class="icon-button" title="Source details" id="source-open">↗</button></div>
+        </header>
+
+        <section class="hero">
+          <div class="hero-copy"><div class="eyebrow"><span class="eyebrow-line"></span>YOUR CONFERENCE, CONNECTED</div><h1>Make the rooms<br />between talks <em>count.</em></h1><p>Pick up the thread you missed. Find the person who can take it further.</p>
+            <div class="hero-meta"><span><b id="event-date">OCTOBER 28–29, 2026</b></span><span class="meta-divider"></span><span id="event-location">FORT MASON · SAN FRANCISCO</span></div>
+          </div>
+          <div class="hero-art" aria-hidden="true"><div class="orbit orbit-1"></div><div class="orbit orbit-2"></div><div class="orbit orbit-3"></div><div class="orbit-core">p</div><span class="orbit-node node-a">AI</span><span class="orbit-node node-b">MCP</span><span class="orbit-node node-c">OSS</span><span class="orbit-node node-d">↗</span><span class="orbit-label">follow the<br />connections</span></div>
+        </section>
+
+        <section class="profile-strip">
+          <div class="profile-icon">✳</div><div class="profile-text"><strong>Your context makes this useful.</strong><span>Tell us what you’re here to learn. It stays yours.</span></div>
+          <div class="profile-inputs"><input id="profile-name" value="You" aria-label="Your name" /><input id="profile-interests" value="secure MCP agents, model evaluation, agent harnesses" aria-label="Topics you care about" /><button id="save-profile" class="save-button">UPDATE PROFILE <span>↗</span></button></div>
+        </section>
+
+        <section class="workspace-grid">
+          <div class="primary-column">
+            <div class="section-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>THE THREAD YOU MISSED</div><h2>Catch me up.</h2></div><span class="section-index">01 / 02</span></div>
+            <div class="catchup-card">
+              <div class="card-kicker"><span class="tiny-play">▶</span>SESSION CATCH-UP <span class="source-pill">SOURCE-BACKED</span></div>
+              <label class="field-label" for="session-select">WHICH SESSION DID YOU MISS?</label>
+              <div class="select-wrap"><select id="session-select"></select><span class="select-chevron">⌄</span></div>
+              <div class="catchup-content" id="catchup-content"></div>
+              <div class="card-bottom"><a id="session-source-link" href="#" target="_blank" rel="noreferrer">OPEN ORIGINAL SESSION SOURCE ↗</a><span id="catchup-coverage">PUBLISHED PREVIEW · NOT A TRANSCRIPT</span></div>
+            </div>
+
+            <div class="section-heading people-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>YOUR NEXT CONVERSATION</div><h2>Who should I meet?</h2></div><button class="text-button" id="refresh-recs">REFRESH MATCHES <span>↻</span></button></div>
+            <div class="people-list" id="people-list"></div>
+          </div>
+
+          <aside class="side-column">
+            <div class="graph-card">
+              <div class="graph-heading"><div><div class="eyebrow"><span class="eyebrow-line"></span>WHY THIS MATCH?</div><h3>The path behind it.</h3></div><span class="graph-live" id="graph-status"><i></i><span>LOCAL GRAPH</span></span></div>
+              <div class="graph-visual" id="graph-visual"></div>
+              <div class="graph-explainer" id="graph-explainer">Your interests connect to sessions, then to the people who present them. Every match has a reason.</div>
+              <button class="graph-query-button" id="show-query"><span>⌘</span> VIEW GRAPH QUERY <span>↗</span></button>
+            </div>
+
+            <div class="sources-card">
+              <div class="sources-head"><div><div class="eyebrow"><span class="eyebrow-line"></span>LIVE WEB CONTEXT</div><h3>Keep the graph fresh.</h3></div><span class="bd-mark">bd</span></div>
+              <p>Bright Data fetches GitHub’s official talk roundup, extracts source passages, and saves verified session records into the graph.</p>
+              <button class="bright-button" id="refresh-data"><span class="spark">✳</span><span>REFRESH WITH BRIGHT DATA</span><span class="arrow">↗</span></button>
+              <div class="refresh-result" id="refresh-result">The source-backed catalog is ready. Run a live Bright Data fetch to refresh its records.</div>
+          <div class="source-list"><a id="source-link" href="#" target="_blank" rel="noreferrer"><span class="source-type">↗</span><span><b>GitHub Blog</b><small>2026 technical talk roundup · Oct 1</small></span><span class="source-arrow">↗</span></a><a id="catalog-link" href="#" target="_blank" rel="noreferrer"><span class="source-type">◌</span><span><b>Universe session catalog</b><small>Official attendee portal</small></span><span class="source-arrow">↗</span></a></div>
+            </div>
+            <div class="privacy-note"><span>◉</span><p><b>Built for real hallway conversations.</b><br />This demo recommends public speakers. Attendee matching would be opt-in.</p></div>
+          </aside>
+        </section>
+
+        <footer class="footer"><span>PATCHWORK <span class="footer-dot">✳</span> BUILT FOR THE IN-BETWEEN</span><span>FALKORDB × BRIGHT DATA <span class="footer-sep">·</span> TRUEFORGE OPTIONAL</span></footer>
+      </main>
+    </div>
+
+    <dialog id="query-dialog" class="dialog"><div class="dialog-top"><div><div class="eyebrow"><span class="eyebrow-line"></span><span id="query-provider">SQLITE · PERSISTENT GRAPH</span></div><h3>Explainable by design.</h3></div><button class="close-button" id="close-query" aria-label="Close">×</button></div><p class="dialog-intro">Your interests connect to topics, sessions, and speakers in a persistent graph database. Met speakers are excluded from the returned paths.</p><pre id="query-code"></pre><div class="dialog-foot" id="graph-mode-detail"></div></dialog>
+    <dialog id="source-dialog" class="dialog"><div class="dialog-top"><div><div class="eyebrow"><span class="eyebrow-line"></span>DATA PROVENANCE</div><h3>Where this comes from.</h3></div><button class="close-button" id="close-source" aria-label="Close">×</button></div><p class="dialog-intro">The session catalog combines GitHub’s official 2026 technical talk roundup with its earlier schedule launch article. Bright Data fetches the public roundup live and verifies listed talk titles. Catch-up notes summarize the published descriptions, not transcripts.</p><a class="dialog-source-link" id="dialog-source-link" href="#" target="_blank" rel="noreferrer">Open source article ↗</a><div class="dialog-foot">Your profile and saved people stay in this browser. Bright Data receives only the public GitHub source URL and your configured API credential.</div></dialog>
+    <dialog id="saved-dialog" class="dialog"><div class="dialog-top"><div><div class="eyebrow"><span class="eyebrow-line"></span>YOUR CONFERENCE LIST</div><h3>People to meet.</h3></div><button class="close-button" id="close-saved" aria-label="Close">×</button></div><p class="dialog-intro">Saved speakers stay on this device. Mark someone met to move them out of future recommendations.</p><div id="saved-people-list" class="saved-people-list"></div></dialog>
+    <div class="toast" id="toast" role="status"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
