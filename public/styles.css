@@ -137,7 +137,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .select-chevron { position: absolute; top: 9px; right: 12px; color: var(--ink); pointer-events: none; }
 .catchup-content { margin-top: 17px; padding: 16px 0 15px; border-top: 1px solid #d7d2c1; }
 .catchup-title { margin: 0 0 10px; font: 600 17px/1.35 var(--display); letter-spacing: -.25px; }
+.recap-label { margin: 0 0 8px; color: #77715e; font: 8px var(--mono); letter-spacing: .05em; }
 .catchup-summary { margin: 0; color: #5e5a4d; font: 13px/1.62 var(--sans); }
+.recap-relevance { margin-top: 12px; padding: 10px 12px; border: 1px solid #d5cfbd; background: #f2f0e2; }
+.recap-relevance b { color: #596341; font: 8px var(--mono); letter-spacing: .05em; }
+.recap-relevance p { margin: 5px 0 0; color: #4b4b3e; font-size: 10px; line-height: 1.5; }
 .speaker-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .speaker-chip { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #d5cfbd; color: #47564d; font-size: 10px; }
 .speaker-dot { display: grid; place-items: center; width: 17px; height: 17px; background: var(--orange); color: var(--ink); font: 500 8px var(--display); }
@@ -163,6 +167,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .person-reason { margin-top: 6px; color: #4e5239; font-size: 10px; line-height: 1.4; }
 .person-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .person-tags span { padding: 4px 6px; background: #ecebd9; color: #5a5846; font: 8px var(--mono); }
+.person-network { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 9px; }
+.person-network a, .person-network button { padding: 0; border: 0; background: transparent; color: #496317; font: 8px var(--mono); letter-spacing: .03em; text-decoration: none; cursor: pointer; }
+.person-network a:hover, .person-network button:hover { color: #d84e2c; text-decoration: underline; }
 .person-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 88px; }
 .match-score { color: #707044; font: 9px var(--mono); }
 .meet-button { padding: 6px 8px; border: 1px solid var(--ink); background: var(--lime); color: var(--ink); font: 8px var(--mono); letter-spacing: .03em; white-space: nowrap; cursor: pointer; }
@@ -305,6 +312,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .person-card { grid-template-columns: 35px minmax(0,1fr) auto; gap: 8px; padding: 10px; }
   .person-avatar { width: 33px; height: 33px; }
   .person-actions { min-width: 78px; gap: 5px; }
+  .person-network { gap: 8px; }
+  .person-network a, .person-network button { font-size: 7px; }
   .meet-button { padding: 6px; font-size: 7px; }
   .footer { gap: 8px; font-size: 6px; }
   .footer span:last-child { text-align: right; }

@@ -361,6 +361,20 @@ async function refreshWithBrightData() {
     const title = normalizeText(session.title);
     return title.length > 0 && normalized.includes(` ${title} `);
   });
+  if (matches.length === 0) {
+    return {
+      ok: true,
+      configured: true,
+      status: response.status,
+      message: 'Bright Data reached GitHub’s official 2026 talk roundup, but this fetch found no exact local-catalog title matches. Existing verified records were left untouched.',
+      foundSessions: 0,
+      sampleMatches: [],
+      previousFoundSessions: lastRefresh?.foundSessions || 0,
+      returnedChars: result.length,
+      at: new Date().toISOString(),
+      preservedPrevious: true
+    };
+  }
   const sections = result.split(/(?=^#{2,3}\s)/m);
   const verifiedAt = new Date().toISOString();
   const scrapedRecords = matches.map(session => {

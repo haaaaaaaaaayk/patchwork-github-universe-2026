@@ -57,7 +57,12 @@ function renderCatchup() {
   const people = session.speakers.map(id => state.data.speakers.find(person => person.id === id)).filter(Boolean);
   const topic = session.topics.find(item => questionByTopic[item]);
   const question = questionByTopic[topic] || 'What would you like people to remember from this session?';
-  $('#catchup-content').innerHTML = `<h3 class="catchup-title">${esc(session.title)}</h3><p class="catchup-summary">${esc(session.summary)}</p><div class="catchup-prompt"><span>ONE GOOD QUESTION TO ASK</span><p>${esc(question)}</p></div><div class="speaker-chips">${people.map(person => `<span class="speaker-chip"><span class="speaker-dot">${esc(initials(person.name))}</span>${esc(person.name)} · ${esc(person.organization)}</span>`).join('')}</div>`;
+  const interestText = state.profile.interests.toLowerCase();
+  const relevantTopic = session.topics.find(item => interestText.includes(item.toLowerCase())) || topic;
+  const personalizedTakeaway = relevantTopic
+    ? `Listen for how this connects to ${relevantTopic}—one of the threads you said you care about.`
+    : `Use this session as a starting point for a conversation about ${session.topics.slice(0, 2).join(' and ').toLowerCase()}.`;
+  $('#catchup-content').innerHTML = `<h3 class="catchup-title">${esc(session.title)}</h3><div class="recap-label">PUBLISHED DESCRIPTION · PERSONALIZED FIELD NOTES</div><p class="catchup-summary">${esc(session.summary)}</p><div class="recap-relevance"><b>FOLLOW THIS THREAD</b><p>${esc(personalizedTakeaway)}</p></div><div class="catchup-prompt"><span>ONE GOOD QUESTION TO ASK</span><p>${esc(question)}</p></div><div class="speaker-chips">${people.map(person => `<span class="speaker-chip"><span class="speaker-dot">${esc(initials(person.name))}</span>${esc(person.name)} · ${esc(person.organization)}</span>`).join('')}</div>`;
   $('#session-source-link').href = session.sourceUrl || state.data.source.url;
   const liveLabel = state.liveSessionIds.has(session.id) ? 'TITLE VERIFIED LIVE' : 'PUBLISHED PREVIEW';
   $('#catchup-coverage').textContent = `${liveLabel} · ${session.topics.length} LINKED TOPICS · NOT A TRANSCRIPT`;
@@ -108,7 +113,11 @@ function renderPeople() {
     const reasonTopics = match.reasons.length ? match.reasons : match.relatedSessions.flatMap(session => state.data.sessions.find(item => item.id === session.id)?.topics || []).slice(0, 2);
     const sessionNames = match.relatedSessions.map(session => session.title);
     const reason = match.reasons.length ? (index === 0 ? 'Strongest path from your interests' : 'Connected to your interests through') : 'Speaker from the session you missed';
-    return `<article class="person-card"><div class="person-avatar">${esc(initials(speaker.name))}</div><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason} ${sessionNames[0] ? `· “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic.toUpperCase())}</span>`).join('')}</div></div><div class="person-actions"><span class="match-score">PATH ${index + 1}</span><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'SAVED ✓' : 'SAVE PERSON +'}</button><button class="met-button" data-met="${esc(speaker.id)}">MET THEM</button></div></article>`;
+    const sharedTopic = reasonTopics[0] || state.missedSession?.topics?.[0] || 'your work';
+    const sessionName = sessionNames[0] || state.missedSession?.title || 'the conference';
+    const linkedinSearch = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${speaker.name} ${speaker.organization}`)}`;
+    const intro = `Hi ${speaker.name.split(/\s+/)[0]} — I saw your work on ${sessionName} and was especially interested in ${sharedTopic}. ${questionByTopic[sharedTopic] || 'What was the most surprising takeaway for you?'} I’d love to hear more.`;
+    return `<article class="person-card"><div class="person-avatar">${esc(initials(speaker.name))}</div><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason} ${sessionNames[0] ? `· “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic.toUpperCase())}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">FIND ON LINKEDIN ↗</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">COPY INTRO</button></div></div><div class="person-actions"><span class="match-score">PATH ${index + 1}</span><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'SAVED ✓' : 'SAVE PERSON +'}</button><button class="met-button" data-met="${esc(speaker.id)}">MET THEM</button></div></article>`;
   }).join('');
   list.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => {
     const id = button.dataset.save;
@@ -125,6 +134,14 @@ function renderPeople() {
     await updateMatches();
     renderSavedPeople();
     toast('Marked met. They’ll leave your recommendations.');
+  }));
+  list.querySelectorAll('[data-copy-intro]').forEach(button => button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(button.dataset.intro);
+      toast('Intro copied. Personalize it before sending.');
+    } catch {
+      toast('Clipboard unavailable. Open LinkedIn and use the question above to start naturally.');
+    }
   }));
 }
 
@@ -163,9 +180,13 @@ function renderGraph(result) {
   const firstSpeaker = result.speakers?.[0]?.speaker;
   const firstPath = result.speakers?.[0]?.relatedSessions?.[0];
   const firstSession = state.data.sessions.find(session => session.id === firstPath?.id) || result.recommendedSessions?.[0] || state.missedSession;
-  const firstTopic = result.matchedTopics?.[0] || 'Your interests';
+  const firstTopic = result.speakers?.[0]?.reasons?.[0]
+    || firstSession?.topics?.find(topic => result.matchedTopics?.includes(topic))
+    || result.matchedTopics?.[0]
+    || 'Your interests';
   const graph = $('#graph-visual');
   graph.innerHTML = `<svg class="graph-lines" viewBox="0 0 420 184" preserveAspectRatio="none" aria-hidden="true"><line class="active-edge" x1="62" y1="88" x2="145" y2="40"/><line class="active-edge" x1="62" y1="88" x2="240" y2="87"/><line x1="145" y1="40" x2="240" y2="87"/><line class="active-edge" x1="240" y1="87" x2="358" y2="143"/></svg><div class="graph-node user"><small>ATTENDEE</small>${esc(state.profile.name)}</div><div class="graph-node topic"><small>TOPIC</small>${esc(firstTopic)}</div><div class="graph-node session"><small>SESSION</small>${esc(firstSession?.title?.slice(0, 42) || 'Pick a session')}</div><div class="graph-node person"><small>SPEAKER</small>${esc(firstSpeaker?.name || 'Find a match')}</div>`;
+  $('#graph-explainer').textContent = `${firstTopic} connects your interests to ${firstSession?.title || 'this session'}${firstSpeaker ? ` and speaker ${firstSpeaker.name}` : ''}.`;
   const connected = ['falkordb', 'sqlite-graph'].includes(state.data.graph.mode);
   $('#graph-status').classList.toggle('connected', connected);
   $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FALKORDB' : connected ? 'SQLITE GRAPH' : 'LOCAL GRAPH';
@@ -202,11 +223,16 @@ async function refreshBrightData() {
     const data = await response.json();
     result.textContent = data.message;
     if (data.ok) {
-      state.liveSessionIds = new Set(data.sampleMatches || []);
-      renderSelect();
-      $('#data-state-label').textContent = data.foundSessions > 0 ? `LIVE · ${data.foundSessions} MATCHED` : 'CATALOG REACHED';
-      $('.state-dot').classList.add('live');
-      toast(data.foundSessions > 0 ? `Bright Data matched ${data.foundSessions} sessions.` : 'Bright Data reached the live catalog. The sourced preview is still active.');
+      if (data.foundSessions > 0) {
+        state.liveSessionIds = new Set(data.sampleMatches || []);
+        renderSelect();
+        $('#data-state-label').textContent = `LIVE · ${data.foundSessions} MATCHED`;
+        $('.state-dot').classList.add('live');
+        toast(`Bright Data matched ${data.foundSessions} sessions.`);
+      } else {
+        $('#data-state-label').textContent = data.previousFoundSessions ? `LAST VERIFIED · ${data.previousFoundSessions}` : 'CATALOG REACHED';
+        toast(data.previousFoundSessions ? `No new title matches. Kept ${data.previousFoundSessions} prior verified records.` : 'No exact titles matched. The published preview remains available.');
+      }
     } else if (data.configured) {
       toast(data.message);
     }
