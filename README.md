@@ -28,18 +28,16 @@ Set `BRIGHTDATA_API_KEY` and `BRIGHTDATA_UNLOCKER_ZONE` in `brightdata.env` or `
 
 ## Persistent graph database
 
-By default, Patchwork stores graph nodes, relationships, attendee interests, and live scrape metadata in `data/patchwork.sqlite`. At startup it runs `PRAGMA integrity_check` and reports the stored node and edge counts. Speaker recommendations and the graph-path inspector query this SQLite graph store.
+By default, Patchwork stores the public conference catalog (event, source, session, speaker, and topic nodes plus their relationships) and Bright Data refresh metadata in `data/patchwork.sqlite`. At startup it runs `PRAGMA integrity_check` and reports stored node and edge counts. The attendee's name, interests, saved speakers, and met list stay in browser storage; interests and met speaker IDs are sent to the local server transiently for matching and are not written to the graph database.
 
-FalkorDB remains an optional graph database target for the iPhone Duo track. To use it:
-
-FalkorDB is optional for local development. Without a reachable database, the conference flows work with the persistent SQLite graph. To use the FalkorDB-backed graph path:
+FalkorDB is optional for local development and the iPhone Duo track. Without a reachable database, the conference flows use the persistent SQLite graph. To use the FalkorDB-backed graph path:
 
 1. Install the optional Node client with `npm install`.
 2. Start a FalkorDB instance or create a Cloud database.
 3. For Cloud, set `FALKORDB_HOST`, `FALKORDB_PORT`, `FALKORDB_USERNAME`, `FALKORDB_PASSWORD`, and `FALKORDB_TLS` in `.env` using the values shown by the Connect panel. Patchwork refuses a remote plain-TCP connection unless `FALKORDB_ALLOW_INSECURE=true` is explicitly set. For a local instance, use `FALKORDB_URL` instead.
 4. Run Patchwork under Node.js 22 or later (`falkordb` requires Node 22+) and confirm the graph badge reports `FALKORDB` with per-label node counts.
 
-When configured, the app seeds Event, Source, Session, Speaker, and Topic nodes in FalkorDB, persists attendee interests and met-speaker edges there, and runs recommendations in Cypher. At startup it executes a graph query to verify the seeded node counts; SQLite remains the local fallback.
+When configured, the app seeds Event, Source, Session, Speaker, and Topic nodes in FalkorDB and runs recommendation path queries in Cypher. Attendee profiles and met-speaker edges are not stored there. At startup it executes a graph query to verify the seeded node counts; SQLite remains the local fallback. Older `Attendee` nodes created by previous builds are removed at startup.
 
 ## Sources and limits
 
