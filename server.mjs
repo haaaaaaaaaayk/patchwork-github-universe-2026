@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import net from 'node:net';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 async function loadLocalEnv() {
@@ -171,8 +172,33 @@ async function alsoMeet(savedIds, metIds) {
 
 const FALKORDB_SPEAKER_PATH_QUERY = 'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE NOT p.id IN $met RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC, p.id LIMIT 12';
 
+// A TLS-vs-plaintext mismatch presents as a plain connect timeout, which is
+// indistinguishable from an unreachable host. Ask the endpoint directly so the
+// log can say which one it is instead of leaving a 10s silence.
+function probeRedisPlaintext(host, port) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => { if (!settled) { settled = true; resolve(value); socket.destroy(); } };
+    const socket = net.connect({ host, port, timeout: 5000 }, () => socket.write('PING\r\n'));
+    socket.setTimeout(5000, () => finish(false));
+    socket.on('data', data => finish(/^[-+]/.test(data.toString())));
+    socket.on('error', () => finish(false));
+  });
+}
+
+function nodeSupportsFalkorClient() {
+  return Number(process.versions.node.split('.')[0]) >= 22;
+}
+
 async function initFalkorDB() {
   if (!process.env.FALKORDB_URL && !process.env.FALKORDB_HOST) return;
+  // The client is ESM-only and requires Node 22+. On an older runtime the import
+  // fails in a way that reads like a connection problem, so say it plainly.
+  if (!nodeSupportsFalkorClient()) {
+    graphState.diagnostic = `FalkorDB is configured but the client needs Node 22 or newer and this is Node ${process.versions.node}. Run "nvm use" (see .nvmrc) and restart. Serving the SQLite graph meanwhile.`;
+    console.warn(graphState.diagnostic);
+    return;
+  }
   const url = process.env.FALKORDB_URL ? (() => { try { return new URL(process.env.FALKORDB_URL); } catch { return null; } })() : null;
   if (process.env.FALKORDB_URL && !url) {
     graphState.diagnostic = 'FALKORDB_URL is not a valid connection URL; refusing to connect.';
@@ -244,7 +270,15 @@ async function initFalkorDB() {
       .slice(0, 180);
     // Keep the SQLite detail the UI shows; the FalkorDB reason is for the operator's log.
     graphState.detail = sqliteDetail;
-    graphState.diagnostic = `Optional FalkorDB connection unavailable (${reason}). Serving the persistent SQLite graph instead.`;
+    let advice = '';
+    if (/timeout/i.test(rawReason) && tlsEnabled) {
+      const host = process.env.FALKORDB_HOST || url?.hostname;
+      const port = Number(process.env.FALKORDB_PORT || url?.port || 6379);
+      if (host && await probeRedisPlaintext(host, port)) {
+        advice = ` The endpoint at port ${port} answered a plaintext Redis PING, so it is reachable but is not speaking TLS. Either point FALKORDB_HOST/PORT at a TLS endpoint, or set FALKORDB_TLS=false together with FALKORDB_ALLOW_INSECURE=true if you accept sending credentials unencrypted.`;
+      }
+    }
+    graphState.diagnostic = `Optional FalkorDB connection unavailable (${reason}).${advice} Serving the persistent SQLite graph instead.`;
     console.warn(graphState.diagnostic);
   }
 }
@@ -717,14 +751,22 @@ async function enrichSpeaker(payload) {
     }
   }
   // Nothing corroborated. Say so rather than show a stranger with the right name.
+  // A transport failure is not a verdict, so only a real rejection gets cached:
+  // otherwise one flaky run would pin "unverified" on a speaker permanently.
+  const reachedLinkedIn = attempts.some(attempt => /headline|employer|empty/i.test(attempt.outcome));
   const record = {
     ok: true, configured: true, speakerId: speaker.id, verified: false, attempts,
     checkedAt: new Date().toISOString(),
-    message: attempts.length
-      ? `No profile could be confirmed as ${speaker.name} of ${speaker.organization}. Patchwork is not guessing.`
-      : `No profile URL could be derived from “${speaker.name}”.`
+    retryable: !reachedLinkedIn,
+    message: !attempts.length
+      ? `No profile URL could be derived from “${speaker.name}”.`
+      : reachedLinkedIn
+        ? `No profile could be confirmed as ${speaker.name} of ${speaker.organization}. Patchwork is not guessing.`
+        : `The lookup for ${speaker.name} could not reach LinkedIn. This is worth retrying.`
   };
-  sqlite(`INSERT INTO app_metadata(key,value) VALUES('enrich:${speaker.id.replaceAll("'", "''")}',${sqlText(JSON.stringify(record))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+  if (!record.retryable) {
+    sqlite(`INSERT INTO app_metadata(key,value) VALUES('enrich:${speaker.id.replaceAll("'", "''")}',${sqlText(JSON.stringify(record))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+  }
   return record;
 }
 

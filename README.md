@@ -7,10 +7,29 @@ Patchwork helps conference attendees recover a missed session and find a useful 
 Requires Node.js 22 or newer for the FalkorDB client and the `sqlite3` command-line tool. The local SQLite fallback works without a Cloud connection.
 
 ```sh
+nvm use      # .nvmrc pins 23.11.0; the FalkorDB client is ESM-only and needs Node 22+
 npm start
 ```
 
 Open <http://127.0.0.1:4173>.
+
+If the graph badge reads `SQLite graph` when you expected FalkorDB, the startup log
+says why. Two causes account for almost every case:
+
+- **Node is too old.** The client needs 22+. The log names your version and tells you
+  to run `nvm use`. This is reported immediately rather than after a connect timeout.
+- **TLS is set but the endpoint speaks plaintext.** This looks exactly like an
+  unreachable host. On a timeout Patchwork probes the port with a plain Redis `PING`;
+  if the endpoint answers, the log says so and names the two ways out.
+
+### Before a live demo
+
+```sh
+npm run prewarm
+```
+
+Reports the active graph mode (and warns when it is not FalkorDB), then fills the
+verified-profile cache so nothing on stage waits on a ~25s LinkedIn unlock.
 
 ## In the demo
 
