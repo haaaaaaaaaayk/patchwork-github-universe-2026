@@ -1,9 +1,10 @@
 const $ = selector => document.querySelector(selector);
 const STORAGE_KEY = 'patchwork:github-universe-2026';
 const savedState = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } })();
+let matchGeneration = 0;
+let activeMatchController = null;
 const state = {
   data: null,
-  attendeeId: savedState.attendeeId || `attendee-${crypto.randomUUID()}`,
   profile: savedState.profile || { name: 'You', interests: 'secure MCP agents, model evaluation, agent harnesses' },
   selectedSessionId: savedState.selectedSessionId || '',
   liveSessionIds: new Set(),
@@ -29,7 +30,6 @@ const questionByTopic = {
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    attendeeId: state.attendeeId,
     profile: state.profile,
     selectedSessionId: state.selectedSessionId,
     saved: [...state.saved],
@@ -65,23 +65,33 @@ function renderCatchup() {
 }
 
 async function updateMatches() {
+  activeMatchController?.abort();
+  const controller = new AbortController();
+  activeMatchController = controller;
+  const generation = ++matchGeneration;
   const button = $('#refresh-recs');
   button.disabled = true;
   try {
     const response = await fetch('/api/recommend', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...state.profile, attendeeId: state.attendeeId, missedSessionId: state.missedSession?.id, metSpeakerIds: [...state.met] })
+      body: JSON.stringify({ interests: state.profile.interests, missedSessionId: state.missedSession?.id, metSpeakerIds: [...state.met] }),
+      signal: controller.signal
     });
     if (!response.ok) throw new Error(`Recommendation request failed (${response.status})`);
     const result = await response.json();
+    if (generation !== matchGeneration) return;
     state.people = result.speakers || [];
     renderPeople();
     renderGraph(result);
   } catch (error) {
+    if (error.name === 'AbortError' || generation !== matchGeneration) return;
     $('#people-list').innerHTML = `<div class="empty-people">Could not load matches: ${esc(error.message)}. Try refreshing in a moment.</div>`;
   } finally {
-    button.disabled = false;
+    if (generation === matchGeneration) {
+      activeMatchController = null;
+      button.disabled = false;
+    }
   }
 }
 
@@ -161,7 +171,11 @@ function renderGraph(result) {
 }
 
 function showQuery() {
-  fetch(`/api/graph-query?attendeeId=${encodeURIComponent(state.attendeeId)}`).then(response => response.json()).then(result => {
+  fetch('/api/graph-query', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ interests: state.profile.interests, metSpeakerIds: [...state.met] })
+  }).then(response => response.json()).then(result => {
     $('#query-provider').textContent = result.graphMode === 'falkordb' ? 'FALKORDB · CYPHER' : result.graphMode === 'sqlite-graph' ? 'SQLITE · PERSISTENT GRAPH' : 'LOCAL GRAPH · PATH PREVIEW';
     $('#query-code').textContent = result.query || result.cypher;
     $('#graph-mode-detail').textContent = `${result.detail || state.data.graph.detail}${result.rows ? ` ${result.rows} graph paths returned.` : ''}`;

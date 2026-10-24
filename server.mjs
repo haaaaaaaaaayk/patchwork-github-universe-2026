@@ -55,6 +55,12 @@ function syncSqliteGraph() {
     CREATE TABLE IF NOT EXISTS app_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS graph_edges_relation_from ON graph_edges(relation,from_id);
     CREATE INDEX IF NOT EXISTS graph_edges_relation_to ON graph_edges(relation,to_id);`);
+  // Remove profiles written by earlier prototypes before rebuilding the public catalog.
+  sqlite(`DELETE FROM graph_edges
+    WHERE relation IN ('INTERESTED_IN','MET')
+      OR from_id IN (SELECT id FROM graph_nodes WHERE label='Attendee')
+      OR to_id IN (SELECT id FROM graph_nodes WHERE label='Attendee');
+    DELETE FROM graph_nodes WHERE label='Attendee';`);
   upsertNode('github-universe-2026', 'Event', seed.event);
   upsertNode(seed.source.id, 'Source', seed.source);
   for (const topic of seed.topics) upsertNode(`topic:${topic}`, 'Topic', { name: topic });
@@ -83,34 +89,36 @@ try {
   if (storedRefresh) lastRefresh = JSON.parse(storedRefresh);
 } catch {}
 
-function persistSqliteProfile(profile, interestTopics) {
-  const attendeeId = profile.id;
-  upsertNode(attendeeId, 'Attendee', { id: attendeeId, name: profile.name || 'You', interests: profile.interests || '' });
-  sqlite(`DELETE FROM graph_edges WHERE from_id=${sqlText(attendeeId)} AND relation IN ('INTERESTED_IN','MET');`);
-  for (const topic of interestTopics) upsertEdge(attendeeId, 'INTERESTED_IN', `topic:${topic}`);
-  for (const speakerId of profile.metSpeakerIds) upsertEdge(attendeeId, 'MET', speakerId);
-}
-
-function sqliteSpeakerPaths(attendeeId) {
+function sqliteSpeakerPaths(interestTopics, metSpeakerIds) {
+  const topicsJson = sqlText(JSON.stringify(interestTopics));
+  const metIdsJson = sqlText(JSON.stringify(metSpeakerIds));
   return sqlite(`SELECT p.id AS speakerId,json_extract(p.properties,'$.name') AS speakerName,json_extract(p.properties,'$.organization') AS organization,
       group_concat(DISTINCT json_extract(t.properties,'$.name')) AS reasons,
       group_concat(DISTINCT s.id) AS sessionIds,count(DISTINCT t.id) AS pathCount
-    FROM graph_edges interest
-    JOIN graph_nodes a ON a.id=interest.from_id AND a.label='Attendee'
-    JOIN graph_nodes t ON t.id=interest.to_id AND t.label='Topic'
+    FROM json_each(${topicsJson}) requested
+    JOIN graph_nodes t ON t.label='Topic' AND json_extract(t.properties,'$.name')=requested.value
     JOIN graph_edges covers ON covers.to_id=t.id AND covers.relation='COVERS'
     JOIN graph_nodes s ON s.id=covers.from_id AND s.label='Session'
     JOIN graph_edges presents ON presents.from_id=s.id AND presents.relation='PRESENTS'
     JOIN graph_nodes p ON p.id=presents.to_id AND p.label='Speaker'
-    WHERE interest.relation='INTERESTED_IN' AND a.id=${sqlText(attendeeId)}
-      AND NOT EXISTS(SELECT 1 FROM graph_edges met WHERE met.from_id=a.id AND met.to_id=p.id AND met.relation='MET')
+    WHERE p.id NOT IN (SELECT value FROM json_each(${metIdsJson}))
     GROUP BY p.id ORDER BY pathCount DESC,p.id LIMIT 12;`, true);
 }
 
 async function initFalkorDB() {
   if (!process.env.FALKORDB_URL && !process.env.FALKORDB_HOST) return;
-  if (process.env.FALKORDB_HOST && process.env.FALKORDB_TLS !== 'true' && process.env.FALKORDB_ALLOW_INSECURE !== 'true') {
-    graphState.detail = 'FalkorDB Cloud advertises a non-TLS endpoint; refusing to send database credentials or graph data over plain TCP. Enable TLS or explicitly opt in after reviewing the risk.';
+  const url = process.env.FALKORDB_URL ? (() => { try { return new URL(process.env.FALKORDB_URL); } catch { return null; } })() : null;
+  if (process.env.FALKORDB_URL && !url) {
+    graphState.detail = 'FALKORDB_URL is not a valid connection URL; refusing to connect.';
+    return;
+  }
+  const configuredHost = process.env.FALKORDB_HOST || url?.hostname || '';
+  const hostname = configuredHost.toLowerCase().replace(/^\[|\]$/g, '');
+  const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(hostname);
+  const urlUsesTls = url?.protocol === 'rediss:';
+  const tlsEnabled = process.env.FALKORDB_TLS === 'true' || urlUsesTls;
+  if (!isLoopback && !tlsEnabled && process.env.FALKORDB_ALLOW_INSECURE !== 'true') {
+    graphState.detail = 'Refusing a remote FalkorDB connection without TLS, including FALKORDB_URL connections. Enable TLS or explicitly opt in after reviewing the risk.';
     return;
   }
   try {
@@ -119,11 +127,13 @@ async function initFalkorDB() {
       username: process.env.FALKORDB_USERNAME || undefined,
       password: process.env.FALKORDB_PASSWORD || undefined,
       ...(process.env.FALKORDB_HOST
-        ? { socket: { host: process.env.FALKORDB_HOST, port: Number(process.env.FALKORDB_PORT || 6379), tls: process.env.FALKORDB_TLS === 'true', connectTimeout: 10000 } }
-        : { url: process.env.FALKORDB_URL, ...(process.env.FALKORDB_TLS === 'true' ? { socket: { tls: true, connectTimeout: 10000 } } : {}) })
+        ? { socket: { host: process.env.FALKORDB_HOST, port: Number(process.env.FALKORDB_PORT || 6379), tls: tlsEnabled, connectTimeout: 10000 } }
+        : { url: process.env.FALKORDB_URL, ...(tlsEnabled ? { socket: { tls: true, connectTimeout: 10000 } } : {}) })
     };
     falkorClient = await FalkorDB.connect(connection);
     graph = falkorClient.selectGraph(graphName);
+    // Older builds stored attendee profiles and could relabel seeded IDs on collisions.
+    await graph.query('MATCH (a:Attendee) DETACH DELETE a');
     await graph.query('MERGE (:Event {id:$id, name:$name, url:$url})', { params: { id: 'github-universe-2026', name: seed.event.name, url: seed.event.url } });
     await graph.query('MERGE (src:Source {id:$id, name:$name, url:$url, publisher:$publisher})', { params: { id: seed.source.id, name: seed.source.name, url: seed.source.url, publisher: seed.source.publisher } });
     for (const topicName of seed.topics) {
@@ -171,14 +181,59 @@ async function initFalkorDB() {
 await initFalkorDB();
 
 function send(res, status, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(type.startsWith('application/json') ? JSON.stringify(body) : body);
 }
 
-async function bodyJson(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const MAX_JSON_BODY_BYTES = 64 * 1024;
+
+function bodyJson(req) {
+  return new Promise((resolve, reject) => {
+    const declaredLength = Number(req.headers['content-length']);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      req.resume();
+      reject(new HttpError(413, 'Request body is too large.'));
+      return;
+    }
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    req.on('data', chunk => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > MAX_JSON_BODY_BYTES) {
+        settled = true;
+        chunks.length = 0;
+        req.resume();
+        reject(new HttpError(413, 'Request body is too large.'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      try {
+        const value = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'Expected a JSON object.');
+        resolve(value);
+      } catch (error) {
+        reject(error instanceof HttpError ? error : new HttpError(400, 'Malformed JSON request body.'));
+      }
+    });
+    req.on('error', error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
+  });
 }
 
 function cleanWords(text) {
@@ -192,22 +247,6 @@ function overlapScore(a, b) {
   let n = 0;
   for (const word of aa) if (word.length > 2 && bb.has(word)) n += 1;
   return n;
-}
-
-async function persistProfile(profile, interestTopics) {
-  persistSqliteProfile(profile, interestTopics);
-  if (!graph) return;
-  const id = profile.id;
-  await graph.query('MERGE (a:Attendee {id:$id}) SET a.name=$name, a.interests=$interests', { params: { id, name: profile.name || 'You', interests: profile.interests || '' } });
-  await graph.query('MATCH (a:Attendee {id:$id})-[r:INTERESTED_IN]->(:Topic) DELETE r', { params: { id } });
-  await graph.query('MATCH (a:Attendee {id:$id})-[r:MET]->(:Speaker) DELETE r', { params: { id } });
-  for (const topic of interestTopics) {
-    await graph.query('MATCH (a:Attendee {id:$id}), (t:Topic {name:$topic}) MERGE (a)-[:INTERESTED_IN]->(t)', { params: { id, topic } });
-  }
-  for (const speakerId of profile.metSpeakerIds) {
-    await graph.query('MATCH (a:Attendee {id:$id}), (p:Speaker {id:$speakerId}) MERGE (a)-[:MET]->(p)', { params: { id, speakerId } });
-  }
-  await graph.query('MATCH (a:Attendee {id:$id})-[:INTERESTED_IN]->(t:Topic)<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE NOT (a)-[:MET]->(p) RETURN a.name, t.name, s.title, p.name', { params: { id } });
 }
 
 function findTopicMatches(text) {
@@ -226,50 +265,55 @@ const topicTerms = {
 };
 
 function profileAndMatches(payload) {
-  const attendeeId = String(payload.attendeeId || 'local-demo').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'local-demo';
-  const metSpeakerIds = [...new Set((Array.isArray(payload.metSpeakerIds) ? payload.metSpeakerIds : []).map(id => String(id).slice(0, 100)))];
-  const profile = { id: attendeeId, name: String(payload.name || 'You').slice(0, 80), interests: String(payload.interests || '').slice(0, 500), metSpeakerIds };
-  const matchedTopics = findTopicMatches(profile.interests);
+  const interests = String(payload.interests || '').slice(0, 500);
+  const knownSpeakerIds = new Set(seed.speakers.map(speaker => speaker.id));
+  const metSpeakerIds = [...new Set((Array.isArray(payload.metSpeakerIds) ? payload.metSpeakerIds : [])
+    .slice(0, seed.speakers.length)
+    .map(id => String(id).slice(0, 100))
+    .filter(id => knownSpeakerIds.has(id)))];
+  const matchedTopics = findTopicMatches(interests);
   const sessions = seed.sessions.map(session => {
     const matched = session.topics.filter(topic => matchedTopics.includes(topic));
-    const keywordScore = overlapScore(profile.interests, `${session.title} ${session.summary}`);
+    const keywordScore = overlapScore(interests, `${session.title} ${session.summary}`);
     return { ...session, matchedTopics: matched, score: matched.length * 3 + keywordScore };
   });
-  return { profile, matchedTopics, sessions };
+  const missedSession = seed.sessions.find(session => session.id === payload.missedSessionId) || null;
+  return { interests, metSpeakerIds, matchedTopics, sessions, missedSession };
+}
+
+async function speakerPaths(interestTopics, metSpeakerIds) {
+  if (!interestTopics.length) return [];
+  if (!graph) return sqliteSpeakerPaths(interestTopics, metSpeakerIds);
+  const result = await graph.query(
+    'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC LIMIT 12',
+    { params: { topics: interestTopics } }
+  );
+  const rows = result.data || result.result_set || [];
+  const met = new Set(metSpeakerIds);
+  return rows.filter(row => {
+    const speakerId = Array.isArray(row) ? row[0] : row.speakerId;
+    return !met.has(speakerId);
+  });
 }
 
 async function recommend(payload) {
-  const { profile, matchedTopics, sessions } = profileAndMatches(payload);
-  await persistProfile(profile, matchedTopics);
-  const missed = sessions.find(session => session.id === payload.missedSessionId);
+  const { metSpeakerIds, matchedTopics, sessions, missedSession: missed } = profileAndMatches(payload);
   const sortedSessions = sessions.filter(session => session.score > 0).sort((a, b) => b.score - a.score);
   const speakerScores = new Map();
-  if (graph) {
-    const result = await graph.query(
-      'MATCH (a:Attendee)-[:INTERESTED_IN]->(t:Topic)<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE a.id=$attendeeId AND NOT (a)-[:MET]->(p) RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC LIMIT 12',
-      { params: { attendeeId: profile.id } }
-    );
-    const rows = result.data || result.result_set || [];
-    for (const row of rows) {
-      const [speakerId, speakerName, organization, reasons, sessionIds, pathCount] = Array.isArray(row)
-        ? row
-        : [row.speakerId, row.speakerName, row.organization, row.reasons, row.sessionIds, row.pathCount];
-      if (!speakerId || profile.metSpeakerIds.includes(speakerId)) continue;
-      const speaker = seed.speakers.find(item => item.id === speakerId) || { id: speakerId, name: speakerName || 'Conference speaker', organization: organization || 'GitHub Universe' };
-      const relatedSessions = (Array.isArray(sessionIds) ? sessionIds : []).map(id => seed.sessions.find(session => session.id === id)).filter(Boolean).map(session => ({ id: session.id, title: session.title }));
-      speakerScores.set(speakerId, { speaker, score: Number(pathCount) || 1, reasons: Array.isArray(reasons) ? reasons : [], relatedSessions });
-    }
-  } else {
-    for (const row of sqliteSpeakerPaths(profile.id)) {
-      const speaker = seed.speakers.find(item => item.id === row.speakerId) || { id: row.speakerId, name: row.speakerName, organization: row.organization };
-      const relatedSessions = String(row.sessionIds || '').split(',').map(id => seed.sessions.find(session => session.id === id)).filter(Boolean).map(session => ({ id: session.id, title: session.title }));
-      speakerScores.set(row.speakerId, { speaker, score: Number(row.pathCount) || 1, reasons: String(row.reasons || '').split(',').filter(Boolean), relatedSessions });
-    }
+  for (const row of await speakerPaths(matchedTopics, metSpeakerIds)) {
+    const [speakerId, speakerName, organization, reasons, sessionIds, pathCount] = Array.isArray(row)
+      ? row
+      : [row.speakerId, row.speakerName, row.organization, row.reasons, row.sessionIds, row.pathCount];
+    if (!speakerId || metSpeakerIds.includes(speakerId)) continue;
+    const speaker = seed.speakers.find(item => item.id === speakerId) || { id: speakerId, name: speakerName || 'Conference speaker', organization: organization || 'GitHub Universe' };
+    const relatedSessions = (Array.isArray(sessionIds) ? sessionIds : String(sessionIds || '').split(',')).map(id => seed.sessions.find(session => session.id === id)).filter(Boolean).map(session => ({ id: session.id, title: session.title }));
+    const normalizedReasons = Array.isArray(reasons) ? reasons : String(reasons || '').split(',').filter(Boolean);
+    speakerScores.set(speakerId, { speaker, score: Number(pathCount) || 1, reasons: normalizedReasons, relatedSessions });
   }
   if (missed) {
     for (const speakerId of missed.speakers) {
       const speaker = seed.speakers.find(item => item.id === speakerId);
-      if (!speaker || profile.metSpeakerIds.includes(speakerId)) continue;
+      if (!speaker || metSpeakerIds.includes(speakerId)) continue;
       const existing = speakerScores.get(speakerId) || { speaker, score: 0, reasons: [], relatedSessions: [] };
       existing.score += 2;
       existing.reasons.push(...missed.topics.filter(topic => matchedTopics.includes(topic)));
@@ -282,7 +326,7 @@ async function recommend(payload) {
     reasons: [...new Set(item.reasons)],
     relatedSessions: item.relatedSessions.filter((session, index, all) => all.findIndex(other => other.id === session.id) === index)
   }));
-  return { profile, matchedTopics, recommendedSessions: sortedSessions.slice(0, 4), speakers, missedSession: missed || null, graphMode: graphState.mode };
+  return { matchedTopics, recommendedSessions: sortedSessions.slice(0, 4), speakers, missedSession: missed, graphMode: graphState.mode };
 }
 
 async function refreshWithBrightData() {
@@ -312,6 +356,13 @@ async function refreshWithBrightData() {
     return title.length > 0 && normalized.includes(` ${title} `);
   });
   const sections = result.split(/(?=^#{2,3}\s)/m);
+  const verifiedAt = new Date().toISOString();
+  // A successful fetch is a replacement snapshot, so unmatched sessions lose old live claims.
+  for (const session of seed.sessions) {
+    delete session.liveSourceExcerpt;
+    delete session.sourceVerifiedAt;
+  }
+  sqlite("UPDATE graph_nodes SET properties=json_remove(properties,'$.liveSourceExcerpt','$.sourceVerifiedAt') WHERE label='Session';");
   const scrapedRecords = matches.map(session => {
     const title = normalizeText(session.title);
     const section = sections.find(candidate => normalizeText(candidate).includes(title)) || '';
@@ -323,12 +374,12 @@ async function refreshWithBrightData() {
       .replace(/&nbsp;|&amp;|&quot;|&#39;|&apos;/g, ' ')
       .replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1400);
     session.liveSourceExcerpt = excerpt;
-    session.sourceVerifiedAt = new Date().toISOString();
+    session.sourceVerifiedAt = verifiedAt;
     upsertNode(session.id, 'Session', session);
     return { sessionId: session.id, title: session.title, excerpt, sourceUrl: seed.source.url };
   });
   const found = matches.map(session => session.id);
-  lastRefresh = { at: new Date().toISOString(), target: seed.source.name, sourceUrl: seed.source.url, returnedChars: result.length, foundSessions: found.length, foundSessionIds: found, extractedRecords: scrapedRecords.length };
+  lastRefresh = { at: verifiedAt, target: seed.source.name, sourceUrl: seed.source.url, returnedChars: result.length, foundSessions: found.length, foundSessionIds: found, extractedRecords: scrapedRecords.length };
   sqlite(`INSERT INTO app_metadata(key,value) VALUES('live_scraped_records',${sqlText(JSON.stringify(scrapedRecords))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
   sqlite(`INSERT INTO app_metadata(key,value) VALUES('last_brightdata_refresh',${sqlText(JSON.stringify(lastRefresh))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
   return {
@@ -351,7 +402,7 @@ const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; char
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
-    if (req.method === 'OPTIONS') return send(res, 204, '');
+    if (req.method === 'OPTIONS') return send(res, 405, { error: 'Cross-origin requests are not supported.' });
     if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
       return send(res, 200, {
         event: seed.event,
@@ -368,19 +419,31 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await recommend(await bodyJson(req)));
     }
     if (req.method === 'POST' && url.pathname === '/api/refresh') {
+      const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      const origin = req.headers.origin;
+      const allowedLocalHosts = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+      let allowedOrigin = false;
+      try {
+        const originUrl = new URL(origin || '');
+        allowedOrigin = originUrl.protocol === 'http:'
+          && allowedLocalHosts.has(originUrl.hostname.toLowerCase())
+          && originUrl.host === req.headers.host;
+      } catch {}
+      if (!['127.0.0.1', '::1'].includes(remoteAddress) || !allowedOrigin) {
+        return send(res, 403, { error: 'Bright Data refresh is available only from this local app.' });
+      }
       return send(res, 200, await refreshWithBrightData());
     }
-    if (req.method === 'GET' && url.pathname === '/api/graph-query') {
-      const cypher = 'MATCH (a:Attendee)-[:INTERESTED_IN]->(t:Topic)<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE a.id = $attendeeId AND NOT (a)-[:MET]->(p) RETURN p.name, t.name, s.title ORDER BY p.name';
-      const attendeeId = String(url.searchParams.get('attendeeId') || 'local-demo').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'local-demo';
-      const result = graph ? await graph.query(cypher, { params: { attendeeId } }) : null;
-      const localRows = graph ? [] : sqliteSpeakerPaths(attendeeId);
+    if (req.method === 'POST' && url.pathname === '/api/graph-query') {
+      const { matchedTopics, metSpeakerIds } = profileAndMatches(await bodyJson(req));
+      const cypher = 'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) RETURN p.name, t.name, s.title ORDER BY p.name';
+      const rows = await speakerPaths(matchedTopics, metSpeakerIds);
       return send(res, 200, {
         graphMode: graphState.mode,
         graph: graphName,
         detail: graphState.detail,
-        query: graph ? cypher : `SQLite graph path query: Attendee → Topic ← Session → Speaker WHERE attendee.id = ${attendeeId} AND NOT MET`,
-        rows: graph ? result?.data?.length || 0 : localRows.length
+        query: graph ? `${cypher}\nParameters: topics = ${JSON.stringify(matchedTopics)}` : `SQLite graph path query: requested topics → sessions → speakers, excluding met speaker IDs. Topics: ${JSON.stringify(matchedTopics)}`,
+        rows: rows.length
       });
     }
     const relative = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
@@ -389,7 +452,7 @@ const server = http.createServer(async (req, res) => {
     const data = await readFile(path);
     return send(res, 200, data, mimeTypes[extname(path)] || 'application/octet-stream');
   } catch (error) {
-    return send(res, 500, { error: error.message || 'Unexpected server error' });
+    return send(res, error.status || 500, { error: error.status ? error.message : 'Unexpected server error' });
   }
 });
 
