@@ -15,7 +15,7 @@ const state = {
 };
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-const initials = name => name.split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase();
+const displayText = value => String(value ?? '').replace(/\s*[—–]\s*/g, ': ').replace(/\s+/g, ' ').trim();
 const catalogUrl = 'https://reg.githubuniverse.com/flow/github/universe26/attendee-portal/page/sessioncatalog';
 const questionByTopic = {
   'Agent harnesses': 'What did you learn about deciding when an agent should keep working versus hand control back?',
@@ -41,7 +41,7 @@ function persist() {
 
 function renderSelect() {
   const select = $('#session-select');
-  select.innerHTML = state.data.sessions.map(session => `<option value="${esc(session.id)}">${esc(session.title)}</option>`).join('');
+  select.innerHTML = state.data.sessions.map(session => `<option value="${esc(session.id)}">${esc(displayText(session.title))}</option>`).join('');
   select.value = state.data.sessions.some(session => session.id === state.selectedSessionId) ? state.selectedSessionId : state.data.sessions[0]?.id;
   state.selectedSessionId = select.value;
   persist();
@@ -60,12 +60,12 @@ function renderCatchup() {
   const interestText = state.profile.interests.toLowerCase();
   const relevantTopic = session.topics.find(item => interestText.includes(item.toLowerCase())) || topic;
   const personalizedTakeaway = relevantTopic
-    ? `Listen for how this connects to ${relevantTopic}—one of the threads you said you care about.`
+    ? `Listen for how this connects to ${relevantTopic}, one of your interests.`
     : `Use this session as a starting point for a conversation about ${session.topics.slice(0, 2).join(' and ').toLowerCase()}.`;
-  $('#catchup-content').innerHTML = `<h3 class="catchup-title">${esc(session.title)}</h3><div class="recap-label">PUBLISHED DESCRIPTION · PERSONALIZED FIELD NOTES</div><p class="catchup-summary">${esc(session.summary)}</p><div class="recap-relevance"><b>FOLLOW THIS THREAD</b><p>${esc(personalizedTakeaway)}</p></div><div class="catchup-prompt"><span>ONE GOOD QUESTION TO ASK</span><p>${esc(question)}</p></div><div class="speaker-chips">${people.map(person => `<span class="speaker-chip"><span class="speaker-dot">${esc(initials(person.name))}</span>${esc(person.name)} · ${esc(person.organization)}</span>`).join('')}</div>`;
+  $('#catchup-content').innerHTML = `<h3 class="catchup-title">${esc(displayText(session.title))}</h3><p class="catchup-summary">${esc(displayText(session.summary))}</p><div class="recap-relevance"><b>For your interests</b><p>${esc(personalizedTakeaway)}</p></div><div class="catchup-prompt"><span>Question to ask</span><p>${esc(question)}</p></div><div class="speaker-chips">${people.map(person => `<span class="speaker-chip">${esc(person.name)}, ${esc(person.organization)}</span>`).join('')}</div>`;
   $('#session-source-link').href = session.sourceUrl || state.data.source.url;
-  const liveLabel = state.liveSessionIds.has(session.id) ? 'TITLE VERIFIED LIVE' : 'PUBLISHED PREVIEW';
-  $('#catchup-coverage').textContent = `${liveLabel} · ${session.topics.length} LINKED TOPICS · NOT A TRANSCRIPT`;
+  const liveLabel = state.liveSessionIds.has(session.id) ? 'Verified source' : 'Published description, not a transcript';
+  $('#catchup-coverage').textContent = liveLabel;
   $('#graph-explainer').textContent = `${session.topics.slice(0, 2).join(' + ')} connect your interests to this session and its speaker.`;
   updateMatches();
 }
@@ -111,13 +111,13 @@ function renderPeople() {
     const speaker = match.speaker;
     const saved = state.saved.has(speaker.id);
     const reasonTopics = match.reasons.length ? match.reasons : match.relatedSessions.flatMap(session => state.data.sessions.find(item => item.id === session.id)?.topics || []).slice(0, 2);
-    const sessionNames = match.relatedSessions.map(session => session.title);
-    const reason = match.reasons.length ? (index === 0 ? 'Strongest path from your interests' : 'Connected to your interests through') : 'Speaker from the session you missed';
+    const sessionNames = match.relatedSessions.map(session => displayText(session.title));
+    const reason = match.reasons.length ? (index === 0 ? 'Top match' : 'Also matches') : 'Speaker from the session you missed';
     const sharedTopic = reasonTopics[0] || state.missedSession?.topics?.[0] || 'your work';
     const sessionName = sessionNames[0] || state.missedSession?.title || 'the conference';
     const linkedinSearch = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${speaker.name} ${speaker.organization}`)}`;
-    const intro = `Hi ${speaker.name.split(/\s+/)[0]} — I saw your work on ${sessionName} and was especially interested in ${sharedTopic}. ${questionByTopic[sharedTopic] || 'What was the most surprising takeaway for you?'} I’d love to hear more.`;
-    return `<article class="person-card"><div class="person-avatar">${esc(initials(speaker.name))}</div><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason} ${sessionNames[0] ? `· “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic.toUpperCase())}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">FIND ON LINKEDIN ↗</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">COPY INTRO</button></div></div><div class="person-actions"><span class="match-score">PATH ${index + 1}</span><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'SAVED ✓' : 'SAVE PERSON +'}</button><button class="met-button" data-met="${esc(speaker.id)}">MET THEM</button></div></article>`;
+    const intro = `Hi ${speaker.name.split(/\s+/)[0]}, I saw your work on ${sessionName} and was especially interested in ${sharedTopic}. ${questionByTopic[sharedTopic] || 'What was the most surprising takeaway for you?'} I’d love to hear more.`;
+    return `<article class="person-card"><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason}${sessionNames[0] ? `. Session: “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">Find on LinkedIn</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">Copy intro</button></div></div><div class="person-actions"><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'Saved' : 'Save person'}</button><button class="met-button" data-met="${esc(speaker.id)}">Mark met</button></div></article>`;
   }).join('');
   list.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => {
     const id = button.dataset.save;
@@ -156,7 +156,7 @@ function renderSavedPeople() {
     const person = state.data.speakers.find(speaker => speaker.id === id);
     if (!person) return '';
     const met = state.met.has(id);
-    return `<article class="saved-person"><div class="person-avatar">${esc(initials(person.name))}</div><div><b>${esc(person.name)}</b><small>${esc(person.organization)} · ${met ? 'Met' : 'Saved to meet'}</small></div><div class="saved-actions">${!met ? `<button class="meet-button" data-mark-met="${esc(id)}">MARK MET</button>` : '<span class="met-label">MET ✓</span>'}<button class="remove-saved" data-remove="${esc(id)}" aria-label="Remove ${esc(person.name)}">×</button></div></article>`;
+    return `<article class="saved-person"><div><b>${esc(person.name)}</b><small>${esc(person.organization)}. ${met ? 'Met' : 'Saved to meet'}</small></div><div class="saved-actions">${!met ? `<button class="meet-button" data-mark-met="${esc(id)}">Mark met</button>` : '<span class="met-label">Met</span>'}<button class="remove-saved" data-remove="${esc(id)}" aria-label="Remove ${esc(person.name)}">Remove</button></div></article>`;
   }).join('');
   list.querySelectorAll('[data-mark-met]').forEach(button => button.addEventListener('click', async () => {
     state.met.add(button.dataset.markMet);
@@ -185,11 +185,11 @@ function renderGraph(result) {
     || result.matchedTopics?.[0]
     || 'Your interests';
   const graph = $('#graph-visual');
-  graph.innerHTML = `<svg class="graph-lines" viewBox="0 0 420 184" preserveAspectRatio="none" aria-hidden="true"><line class="active-edge" x1="62" y1="88" x2="145" y2="40"/><line class="active-edge" x1="62" y1="88" x2="240" y2="87"/><line x1="145" y1="40" x2="240" y2="87"/><line class="active-edge" x1="240" y1="87" x2="358" y2="143"/></svg><div class="graph-node user"><small>ATTENDEE</small>${esc(state.profile.name)}</div><div class="graph-node topic"><small>TOPIC</small>${esc(firstTopic)}</div><div class="graph-node session"><small>SESSION</small>${esc(firstSession?.title?.slice(0, 42) || 'Pick a session')}</div><div class="graph-node person"><small>SPEAKER</small>${esc(firstSpeaker?.name || 'Find a match')}</div>`;
-  $('#graph-explainer').textContent = `${firstTopic} connects your interests to ${firstSession?.title || 'this session'}${firstSpeaker ? ` and speaker ${firstSpeaker.name}` : ''}.`;
+  graph.innerHTML = `<svg class="graph-lines" viewBox="0 0 420 184" preserveAspectRatio="none" aria-hidden="true"><line class="active-edge" x1="62" y1="88" x2="145" y2="40"/><line class="active-edge" x1="62" y1="88" x2="240" y2="87"/><line x1="145" y1="40" x2="240" y2="87"/><line class="active-edge" x1="240" y1="87" x2="358" y2="143"/></svg><div class="graph-node user"><small>Attendee</small>${esc(state.profile.name)}</div><div class="graph-node topic"><small>Topic</small>${esc(firstTopic)}</div><div class="graph-node session"><small>Session</small>${esc(displayText(firstSession?.title?.slice(0, 42) || 'Pick a session'))}</div><div class="graph-node person"><small>Speaker</small>${esc(firstSpeaker?.name || 'Find a match')}</div>`;
+  $('#graph-explainer').textContent = `${firstTopic} connects your interests to ${displayText(firstSession?.title || 'this session')}${firstSpeaker ? ` and speaker ${firstSpeaker.name}` : ''}.`;
   const connected = ['falkordb', 'sqlite-graph'].includes(state.data.graph.mode);
   $('#graph-status').classList.toggle('connected', connected);
-  $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FALKORDB' : connected ? 'SQLITE GRAPH' : 'LOCAL GRAPH';
+  $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FalkorDB' : connected ? 'SQLite graph' : 'Local graph';
 }
 
 function showQuery() {
@@ -198,7 +198,7 @@ function showQuery() {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ interests: state.profile.interests, metSpeakerIds: [...state.met] })
   }).then(response => response.json()).then(result => {
-    $('#query-provider').textContent = result.graphMode === 'falkordb' ? 'FALKORDB · CYPHER' : result.graphMode === 'sqlite-graph' ? 'SQLITE · PERSISTENT GRAPH' : 'LOCAL GRAPH · PATH PREVIEW';
+    $('#query-provider').textContent = result.graphMode === 'falkordb' ? 'FalkorDB graph' : result.graphMode === 'sqlite-graph' ? 'SQLite graph' : 'Local graph';
     $('#query-code').textContent = result.query || result.cypher;
     $('#graph-mode-detail').textContent = `${result.detail || state.data.graph.detail}${result.rows ? ` ${result.rows} graph paths returned.` : ''}`;
     $('#query-dialog').showModal();
@@ -226,11 +226,10 @@ async function refreshBrightData() {
       if (data.foundSessions > 0) {
         state.liveSessionIds = new Set(data.sampleMatches || []);
         renderSelect();
-        $('#data-state-label').textContent = `LIVE · ${data.foundSessions} MATCHED`;
-        $('.state-dot').classList.add('live');
+        $('#data-state-label').textContent = `Live source, ${data.foundSessions} matches`;
         toast(`Bright Data matched ${data.foundSessions} sessions.`);
       } else {
-        $('#data-state-label').textContent = data.previousFoundSessions ? `LAST VERIFIED · ${data.previousFoundSessions}` : 'CATALOG REACHED';
+        $('#data-state-label').textContent = data.previousFoundSessions ? `Previously verified, ${data.previousFoundSessions}` : 'Source reached';
         toast(data.previousFoundSessions ? `No new title matches. Kept ${data.previousFoundSessions} prior verified records.` : 'No exact titles matched. The published preview remains available.');
       }
     } else if (data.configured) {
@@ -247,10 +246,8 @@ async function boot() {
   const response = await fetch('/api/bootstrap');
   if (!response.ok) throw new Error(`Conference data unavailable (${response.status})`);
   state.data = await response.json();
-  $('#top-event-name').textContent = state.data.event.name.toUpperCase();
-  $('#rail-event-name').textContent = state.data.event.name.replace('2026', '’26');
-  $('#event-date').textContent = state.data.event.dates.toUpperCase();
-  $('#event-location').textContent = state.data.event.location.toUpperCase();
+  $('#event-date').textContent = String(state.data.event.dates).replace(/(\w+ \d+)[–—](\d+,)/, '$1 and $2');
+  $('#event-location').textContent = state.data.event.location;
   $('#source-link').href = state.data.source.url;
   $('#dialog-source-link').href = state.data.source.url;
   $('#catalog-link').href = catalogUrl;
@@ -261,15 +258,13 @@ async function boot() {
   $('#graph-mode-detail').textContent = state.data.graph.detail;
   if (state.data.lastRefresh?.foundSessionIds) state.liveSessionIds = new Set(state.data.lastRefresh.foundSessionIds);
   if (state.data.lastRefresh?.foundSessions) {
-    $('#refresh-result').textContent = `Last live Bright Data fetch verified ${state.data.lastRefresh.foundSessions} exact titles and saved ${state.data.lastRefresh.extractedRecords || 0} source excerpts to SQLite.`;
+    $('#refresh-result').textContent = `Last check: ${state.data.lastRefresh.foundSessions} verified titles.`;
   }
   if (state.data.lastRefresh?.foundSessions) {
-    $('#data-state-label').textContent = `LIVE · ${state.data.lastRefresh.foundSessions} MATCHED`;
-    $('.state-dot').classList.add('live');
+    $('#data-state-label').textContent = `Live source, ${state.data.lastRefresh.foundSessions} matches`;
   }
-  if (state.data.graph.mode === 'falkordb') $('#data-state-label').textContent = 'FALKORDB CONNECTED';
-  else if (state.data.graph.mode === 'sqlite-graph' && !state.data.lastRefresh?.foundSessions) $('#data-state-label').textContent = 'SQLITE GRAPH · READY';
-  if (['falkordb', 'sqlite-graph'].includes(state.data.graph.mode)) $('.state-dot').classList.add('live');
+  if (state.data.graph.mode === 'falkordb') $('#data-state-label').textContent = 'FalkorDB connected';
+  else if (state.data.graph.mode === 'sqlite-graph' && !state.data.lastRefresh?.foundSessions) $('#data-state-label').textContent = 'SQLite graph ready';
   renderSavedPeople();
   renderSelect();
 }
