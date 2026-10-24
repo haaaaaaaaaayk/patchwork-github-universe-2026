@@ -36,7 +36,7 @@ function persist() {
     met: [...state.met]
   }));
   $('#saved-count').textContent = String(state.saved.size);
-  $('#saved-nav').setAttribute('aria-label', `Saved people, ${state.saved.size} saved`);
+  $('#saved-nav').setAttribute('aria-label', `Saved speakers, ${state.saved.size} saved`);
 }
 
 function renderSelect() {
@@ -117,7 +117,7 @@ function renderPeople() {
     const sessionName = sessionNames[0] || state.missedSession?.title || 'the conference';
     const linkedinSearch = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${speaker.name} ${speaker.organization}`)}`;
     const intro = `Hi ${speaker.name.split(/\s+/)[0]}, I saw your work on ${sessionName} and was especially interested in ${sharedTopic}. ${questionByTopic[sharedTopic] || 'What was the most surprising takeaway for you?'} I’d love to hear more.`;
-    return `<article class="person-card"><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason}${sessionNames[0] ? `. Session: “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">Find on LinkedIn</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">Copy intro</button></div></div><div class="person-actions"><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'Saved' : 'Save person'}</button><button class="met-button" data-met="${esc(speaker.id)}">Mark met</button></div></article>`;
+    return `<article class="person-card"><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason}${sessionNames[0] ? `. Session: “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">Find on LinkedIn</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">Copy intro</button></div></div><div class="person-actions"><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'Saved' : 'Save speaker'}</button><button class="met-button" data-met="${esc(speaker.id)}">Mark met</button></div></article>`;
   }).join('');
   list.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => {
     const id = button.dataset.save;
@@ -125,7 +125,7 @@ function renderPeople() {
     persist();
     renderPeople();
     renderSavedPeople();
-    toast(state.saved.has(id) ? 'Saved to your people list.' : 'Removed from your people list.');
+    toast(state.saved.has(id) ? 'Saved to your speaker list.' : 'Removed from your speaker list.');
   }));
   list.querySelectorAll('[data-met]').forEach(button => button.addEventListener('click', async () => {
     const id = button.dataset.met;
@@ -186,7 +186,7 @@ function renderGraph(result) {
     || 'Your interests';
   const graph = $('#graph-visual');
   graph.innerHTML = `<svg class="graph-lines" viewBox="0 0 420 184" preserveAspectRatio="none" aria-hidden="true"><line class="active-edge" x1="62" y1="88" x2="145" y2="40"/><line class="active-edge" x1="62" y1="88" x2="240" y2="87"/><line x1="145" y1="40" x2="240" y2="87"/><line class="active-edge" x1="240" y1="87" x2="358" y2="143"/></svg><div class="graph-node user"><small>Attendee</small>${esc(state.profile.name)}</div><div class="graph-node topic"><small>Topic</small>${esc(firstTopic)}</div><div class="graph-node session"><small>Session</small>${esc(displayText(firstSession?.title?.slice(0, 42) || 'Pick a session'))}</div><div class="graph-node person"><small>Speaker</small>${esc(firstSpeaker?.name || 'Find a match')}</div>`;
-  $('#graph-explainer').textContent = `${firstTopic} connects your interests to ${displayText(firstSession?.title || 'this session')}${firstSpeaker ? ` and speaker ${firstSpeaker.name}` : ''}.`;
+  $('#graph-explainer').textContent = `A shared interest leads to this session${firstSpeaker ? ` and its speaker, ${firstSpeaker.name}` : ''}: ${firstTopic}.`;
   const connected = ['falkordb', 'sqlite-graph'].includes(state.data.graph.mode);
   $('#graph-status').classList.toggle('connected', connected);
   $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FalkorDB' : connected ? 'SQLite graph' : 'Local graph';
@@ -254,7 +254,7 @@ async function boot() {
   $('#profile-name').value = state.profile.name;
   $('#profile-interests').value = state.profile.interests;
   $('#saved-count').textContent = String(state.saved.size);
-  $('#saved-nav').setAttribute('aria-label', `Saved people, ${state.saved.size} saved`);
+  $('#saved-nav').setAttribute('aria-label', `Saved speakers, ${state.saved.size} saved`);
   $('#graph-mode-detail').textContent = state.data.graph.detail;
   if (state.data.lastRefresh?.foundSessionIds) state.liveSessionIds = new Set(state.data.lastRefresh.foundSessionIds);
   if (state.data.lastRefresh?.foundSessions) {
