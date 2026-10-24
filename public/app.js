@@ -36,6 +36,7 @@ function persist() {
     met: [...state.met]
   }));
   $('#saved-count').textContent = String(state.saved.size);
+  $('#saved-nav').setAttribute('aria-label', `Saved people, ${state.saved.size} saved`);
 }
 
 function renderSelect() {
@@ -230,6 +231,7 @@ async function boot() {
   $('#profile-name').value = state.profile.name;
   $('#profile-interests').value = state.profile.interests;
   $('#saved-count').textContent = String(state.saved.size);
+  $('#saved-nav').setAttribute('aria-label', `Saved people, ${state.saved.size} saved`);
   $('#graph-mode-detail').textContent = state.data.graph.detail;
   if (state.data.lastRefresh?.foundSessionIds) state.liveSessionIds = new Set(state.data.lastRefresh.foundSessionIds);
   if (state.data.lastRefresh?.foundSessions) {
