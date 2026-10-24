@@ -111,6 +111,64 @@ function sqliteSpeakerPaths(interestTopics, metSpeakerIds) {
   return sqlite(sqliteSpeakerPathQuery(interestTopics, metSpeakerIds), true);
 }
 
+// Four hops: a speaker you saved <- their session -> a shared topic <- another
+// session -> the speaker presenting it. This is the "who else should I meet"
+// question, and it is only answerable by walking the graph.
+function sqliteAlsoMeetQuery(savedIds, excludeIds) {
+  const savedJson = sqlText(JSON.stringify(savedIds));
+  const excludeJson = sqlText(JSON.stringify(excludeIds));
+  return `SELECT other.id AS speakerId,
+      json_extract(other.properties,'$.name') AS speakerName,
+      json_extract(other.properties,'$.organization') AS organization,
+      group_concat(DISTINCT json_extract(t.properties,'$.name')) AS sharedTopics,
+      group_concat(DISTINCT json_extract(anchor.properties,'$.name')) AS viaSpeakers,
+      group_concat(DISTINCT s2.id) AS sessionIds,
+      count(DISTINCT t.id) AS strength
+    FROM json_each(${savedJson}) saved
+    JOIN graph_nodes anchor ON anchor.id=saved.value AND anchor.label='Speaker'
+    JOIN graph_edges p1 ON p1.relation='PRESENTS' AND p1.to_id=anchor.id
+    JOIN graph_nodes s1 ON s1.id=p1.from_id AND s1.label='Session'
+    JOIN graph_edges c1 ON c1.relation='COVERS' AND c1.from_id=s1.id
+    JOIN graph_nodes t ON t.id=c1.to_id AND t.label='Topic'
+    JOIN graph_edges c2 ON c2.relation='COVERS' AND c2.to_id=t.id
+    JOIN graph_nodes s2 ON s2.id=c2.from_id AND s2.label='Session' AND s2.id<>s1.id
+    JOIN graph_edges p2 ON p2.relation='PRESENTS' AND p2.from_id=s2.id
+    JOIN graph_nodes other ON other.id=p2.to_id AND other.label='Speaker'
+    WHERE other.id NOT IN (SELECT value FROM json_each(${excludeJson}))
+    GROUP BY other.id ORDER BY strength DESC, other.id LIMIT 6;`;
+}
+
+const FALKORDB_ALSO_MEET_QUERY = 'UNWIND $saved AS savedId MATCH (anchor:Speaker {id:savedId})<-[:PRESENTS]-(s1:Session)-[:COVERS]->(t:Topic)<-[:COVERS]-(s2:Session)-[:PRESENTS]->(other:Speaker) WHERE NOT other.id IN $exclude AND s1 <> s2 RETURN other.id AS speakerId, other.name AS speakerName, other.organization AS organization, collect(DISTINCT t.name) AS sharedTopics, collect(DISTINCT anchor.name) AS viaSpeakers, collect(DISTINCT s2.id) AS sessionIds, count(DISTINCT t) AS strength ORDER BY strength DESC, other.id LIMIT 6';
+
+async function alsoMeet(savedIds, metIds) {
+  if (!savedIds.length) return { speakers: [], query: '', rows: 0 };
+  const exclude = [...new Set([...savedIds, ...metIds])];
+  const rows = graph
+    ? ((await graph.query(FALKORDB_ALSO_MEET_QUERY, { params: { saved: savedIds, exclude } })).data || [])
+    : sqlite(sqliteAlsoMeetQuery(savedIds, exclude), true);
+  const speakers = rows.map(row => {
+    const [speakerId, speakerName, organization, sharedTopics, viaSpeakers, sessionIds, strength] = Array.isArray(row)
+      ? row
+      : [row.speakerId, row.speakerName, row.organization, row.sharedTopics, row.viaSpeakers, row.sessionIds, row.strength];
+    const list = value => (Array.isArray(value) ? value : String(value || '').split(',')).filter(Boolean);
+    return {
+      speaker: seed.speakers.find(item => item.id === speakerId) || { id: speakerId, name: speakerName, organization },
+      sharedTopics: list(sharedTopics),
+      viaSpeakers: list(viaSpeakers),
+      relatedSessions: list(sessionIds).map(id => seed.sessions.find(session => session.id === id)).filter(Boolean)
+        .map(session => ({ id: session.id, title: session.title, sourceUrl: session.sourceUrl || seed.event.url })),
+      strength: Number(strength) || 1
+    };
+  });
+  return {
+    speakers,
+    rows: rows.length,
+    query: graph
+      ? `${FALKORDB_ALSO_MEET_QUERY}\nParameters: saved = ${JSON.stringify(savedIds)}, exclude = ${JSON.stringify(exclude)}`
+      : sqliteAlsoMeetQuery(savedIds, exclude)
+  };
+}
+
 const FALKORDB_SPEAKER_PATH_QUERY = 'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE NOT p.id IN $met RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC, p.id LIMIT 12';
 
 async function initFalkorDB() {
@@ -567,6 +625,109 @@ async function searchLiveSpeakers(payload) {
   };
 }
 
+// LinkedIn blocks plain scripts after a handful of requests (HTTP 999), so the
+// profile lookup goes through Bright Data. A fetched page is never trusted on
+// its own: a name-derived profile URL can easily land on a different person, so
+// the profile must corroborate both the speaker's name and the organization the
+// official GitHub source gave us before Patchwork will show it.
+function linkedinCandidates(name) {
+  const parts = String(name || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z\s-]/g, '').split(/[\s-]+/).filter(Boolean);
+  if (parts.length < 2) return [];
+  const [first, ...rest] = parts;
+  const last = rest[rest.length - 1];
+  return [...new Set([`${first}${last}`, `${first}-${last}`, parts.join('-')])];
+}
+
+// LinkedIn's markdown conversion trips Bright Data's "reject element found"
+// guard on the auth-wall banner and returns an empty body, so profiles are
+// fetched as raw HTML and the headline is read out of <title>.
+function profileHeadline(html) {
+  const title = String(html).match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+  return title.replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s*\|\s*LinkedIn\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+function verifyProfile(text, speaker) {
+  const flat = String(text).replace(/\s+/g, ' ');
+  const norm = value => String(value).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const body = norm(flat.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' '));
+  const headline = profileHeadline(flat) || flat.slice(0, 200);
+  const nameParts = norm(speaker.name).split(' ').filter(word => word.length > 1);
+  // Every part of the speaker's name has to appear in the page's own headline.
+  const nameMatch = nameParts.length > 0 && nameParts.every(part => norm(headline).includes(part));
+  // The organization is the tie-breaker that rules out a same-named stranger.
+  const orgWords = norm(speaker.organization).split(' ')
+    .filter(word => word.length > 3 && !['the', 'inc', 'ltd', 'llc', 'foundation', 'university', 'software'].includes(word));
+  const orgMatch = orgWords.length === 0 || orgWords.some(word => body.includes(word));
+  return {
+    verified: nameMatch && orgMatch,
+    nameMatch,
+    orgMatch,
+    headline: (profileHeadline(flat) || flat.slice(0, 160)).slice(0, 160).trim(),
+    reason: nameMatch ? (orgMatch ? 'Name and organization both confirmed on the profile.' : `The profile names a different employer than “${speaker.organization}”, so Patchwork will not claim it is the same person.`) : 'The profile headline does not carry this speaker’s name.'
+  };
+}
+
+async function enrichSpeaker(payload) {
+  await loadLocalEnv();
+  const speaker = seed.speakers.find(item => item.id === String(payload.speakerId || '').slice(0, 100));
+  if (!speaker) throw new HttpError(404, 'That speaker is not in the conference graph.');
+  const cached = sqlite(`SELECT value FROM app_metadata WHERE key='enrich:${String(speaker.id).replaceAll("'", "''")}';`, true)[0]?.value;
+  if (cached) { try { return { ...JSON.parse(cached), cached: true }; } catch {} }
+
+  const apiKey = process.env.BRIGHTDATA_API_KEY;
+  const zone = process.env.BRIGHTDATA_UNLOCKER_ZONE;
+  if (!apiKey || !zone) return { ok: false, configured: false, speakerId: speaker.id, message: 'Bright Data is not configured, so no profile lookup was made.' };
+
+  const attempts = [];
+  for (const slug of linkedinCandidates(speaker.name)) {
+    const profileUrl = `https://www.linkedin.com/in/${slug}`;
+    try {
+      let response;
+      let text = '';
+      // An empty body means Bright Data rejected the page mid-unlock; one retry
+      // clears it often enough to be worth the extra few seconds.
+      for (let attempt = 0; attempt < 2 && !text.trim(); attempt += 1) {
+        response = await fetch('https://api.brightdata.com/request', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ zone, url: profileUrl, format: 'raw' }),
+          signal: AbortSignal.timeout(60000)
+        });
+        if (!response.ok) break;
+        text = await response.text();
+      }
+      if (!response.ok) { attempts.push({ profileUrl, outcome: `Bright Data returned HTTP ${response.status}` }); continue; }
+      if (!text.trim()) { attempts.push({ profileUrl, outcome: 'Bright Data reached LinkedIn but the page came back empty twice.' }); continue; }
+      const check = verifyProfile(text, speaker);
+      if (!check.verified) { attempts.push({ profileUrl, outcome: check.reason }); continue; }
+      const record = {
+        ok: true, configured: true, speakerId: speaker.id, verified: true, profileUrl,
+        headline: check.headline, checkedAt: new Date().toISOString(), attempts,
+        message: `Profile fetched through Bright Data and confirmed against the graph: ${check.reason}`
+      };
+      sqlite(`INSERT INTO app_metadata(key,value) VALUES('enrich:${speaker.id.replaceAll("'", "''")}',${sqlText(JSON.stringify(record))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+      upsertNode(speaker.id, 'Speaker', { linkedinUrl: profileUrl, linkedinHeadline: check.headline, linkedinVerifiedAt: record.checkedAt });
+      if (graph) await graph.query('MATCH (p:Speaker {id:$id}) SET p.linkedinUrl=$url, p.linkedinHeadline=$headline, p.linkedinVerifiedAt=$at',
+        { params: { id: speaker.id, url: profileUrl, headline: check.headline, at: record.checkedAt } });
+      return record;
+    } catch (error) {
+      attempts.push({ profileUrl, outcome: error.name === 'TimeoutError' ? 'The profile fetch timed out.' : 'The profile could not be fetched.' });
+    }
+  }
+  // Nothing corroborated. Say so rather than show a stranger with the right name.
+  const record = {
+    ok: true, configured: true, speakerId: speaker.id, verified: false, attempts,
+    checkedAt: new Date().toISOString(),
+    message: attempts.length
+      ? `No profile could be confirmed as ${speaker.name} of ${speaker.organization}. Patchwork is not guessing.`
+      : `No profile URL could be derived from “${speaker.name}”.`
+  };
+  sqlite(`INSERT INTO app_metadata(key,value) VALUES('enrich:${speaker.id.replaceAll("'", "''")}',${sqlText(JSON.stringify(record))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+  return record;
+}
+
 const staticRoot = resolve(root, 'public');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
 
@@ -617,6 +778,20 @@ const server = http.createServer(async (req, res) => {
         return send(res, 403, { error: 'Bright Data refresh is available only from this local app.' });
       }
       return send(res, 200, await refreshWithBrightData());
+    }
+    if (req.method === 'POST' && url.pathname === '/api/also-meet') {
+      const payload = await bodyJson(req);
+      const known = new Set(seed.speakers.map(speaker => speaker.id));
+      const clean = value => [...new Set((Array.isArray(value) ? value : []).map(id => String(id).slice(0, 100)).filter(id => known.has(id)))];
+      const savedIds = clean(payload.savedIds).slice(0, seed.speakers.length);
+      const metIds = clean(payload.metSpeakerIds).slice(0, seed.speakers.length);
+      const result = await alsoMeet(savedIds, metIds);
+      return send(res, 200, { ...result, graphMode: graphState.mode, detail: graphState.detail, hops: 4 });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/speakers/enrich') {
+      const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      if (!['127.0.0.1', '::1'].includes(remoteAddress)) return send(res, 403, { error: 'Enrichment is available only from this local app.' });
+      return send(res, 200, await enrichSpeaker(await bodyJson(req)));
     }
     if (req.method === 'POST' && url.pathname === '/api/graph-query') {
       const { interests, matchedTopics, metSpeakerIds } = profileAndMatches(await bodyJson(req));

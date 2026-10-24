@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "prewarm": "node scripts/prewarm.mjs"
   },
   "optionalDependencies": {
     "falkordb": "^6.9.2"

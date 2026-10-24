@@ -17,7 +17,9 @@ const state = {
   people: [],
   saved: new Set(savedState.saved || []),
   met: new Set(savedState.met || []),
-  suggestions: []
+  suggestions: [],
+  enriched: new Map(),
+  alsoMeet: []
 };
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -150,6 +152,34 @@ function emptyStateHtml() {
   return `<b>Pick a topic to meet people through.</b><p>Patchwork fetches GitHub’s public speaker and schedule pages, then traces speakers back to the sessions they are presenting.</p><div class="topic-chips">${chips}</div>`;
 }
 
+// A LinkedIn profile is only ever shown once Bright Data has fetched it and the
+// page itself corroborated the speaker's name and organization.
+function enrichMarkup(speaker) {
+  const found = state.enriched.get(speaker.id);
+  if (!found) return `<button type="button" class="enrich-button" data-enrich="${esc(speaker.id)}">Find verified profile</button>`;
+  if (found.pending) return `<span class="enrich-pending">Unlocking LinkedIn\u2026</span>`;
+  if (found.verified) return `<a class="enrich-ok" href="${esc(found.profileUrl)}" target="_blank" rel="noreferrer" title="${esc(found.headline)}">\u2713 ${esc(found.headline.slice(0, 46))}</a>`;
+  return `<span class="enrich-miss" title="${esc(found.message || '')}">Could not verify \u2014 not guessing</span>`;
+}
+
+async function enrichSpeaker(id) {
+  state.enriched.set(id, { pending: true });
+  renderPeople();
+  try {
+    const response = await fetch('/api/speakers/enrich', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ speakerId: id })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `Lookup failed (${response.status})`);
+    state.enriched.set(id, data);
+    toast(data.verified ? 'Profile verified against the graph.' : 'No profile could be confirmed. Patchwork will not guess.');
+  } catch (error) {
+    state.enriched.set(id, { verified: false, message: error.message });
+    toast(`Profile lookup failed: ${error.message}`);
+  }
+  renderPeople();
+}
+
 function renderPeople() {
   const list = $('#people-list');
   if (!state.people.length) {
@@ -178,11 +208,10 @@ function renderPeople() {
           : 'Direct topic match';
     const sharedTopic = reasonTopics[0] || state.missedSession?.topics?.[0] || 'your work';
     const sessionName = sessionNames[0] || state.missedSession?.title || 'the conference';
-    const linkedinSearch = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${speaker.name} ${speaker.organization}`)}`;
     const introQuestion = questionByTopic[sharedTopic] || 'What was the most surprising thing you learned putting it together?';
     const intro = `Hi ${speaker.name.split(/\s+/)[0]} — I came across your Universe session, “${sessionName},” and ${sharedTopic.toLowerCase()} is close to what I work on. ${introQuestion} Would love to hear your take.`;
     const sourceUrl = match.relatedSessions[0]?.sourceUrl || state.data.event.url;
-    return `<article class="person-card"><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason}${sessionNames[0] ? `. Session: “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div><div class="person-network"><a href="${esc(linkedinSearch)}" target="_blank" rel="noreferrer">Find LinkedIn profile</a><a href="${esc(sourceUrl)}" target="_blank" rel="noreferrer">Official session</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">Copy intro</button></div></div><div class="person-actions"><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'Saved' : 'Save speaker'}</button><button class="met-button" data-met="${esc(speaker.id)}">Mark met</button></div></article>`;
+    return `<article class="person-card"><div><div class="person-name">${esc(speaker.name)}</div><div class="person-org">${esc(speaker.organization)}</div><div class="person-reason">${reason}${sessionNames[0] ? `. Session: “${esc(sessionNames[0])}”` : ''}</div><div class="person-tags">${[...new Set(reasonTopics)].slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div><div class="person-network">${enrichMarkup(speaker)}<a href="${esc(sourceUrl)}" target="_blank" rel="noreferrer">Official session</a><button type="button" data-copy-intro="${esc(speaker.id)}" data-intro="${esc(intro)}">Copy intro</button></div></div><div class="person-actions"><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(speaker.id)}">${saved ? 'Saved' : 'Save speaker'}</button><button class="met-button" data-met="${esc(speaker.id)}">Mark met</button></div></article>`;
   }).join('');
   list.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => {
     const id = button.dataset.save;
@@ -190,6 +219,7 @@ function renderPeople() {
     persist();
     renderPeople();
     renderSavedPeople();
+    loadAlsoMeet();
     toast(state.saved.has(id) ? 'Saved to your speaker list.' : 'Removed from your speaker list.');
   }));
   list.querySelectorAll('[data-met]').forEach(button => button.addEventListener('click', async () => {
@@ -198,6 +228,8 @@ function renderPeople() {
     await markMet(id);
     toast(`${name} marked met and removed from your matches.`, { label: 'Undo', run: () => unmarkMet(id) });
   }));
+  list.querySelectorAll('[data-enrich]').forEach(button =>
+    button.addEventListener('click', () => enrichSpeaker(button.dataset.enrich)));
   list.querySelectorAll('[data-copy-intro]').forEach(button => button.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(button.dataset.intro);
@@ -213,6 +245,7 @@ async function markMet(id) {
   persist();
   await updateMatches();
   renderSavedPeople();
+  loadAlsoMeet();
 }
 
 async function unmarkMet(id) {
@@ -220,6 +253,7 @@ async function unmarkMet(id) {
   persist();
   await updateMatches();
   renderSavedPeople();
+  loadAlsoMeet();
   const name = state.data.speakers.find(person => person.id === id)?.name || 'They';
   toast(`${name} is back in your matches.`);
 }
@@ -276,6 +310,53 @@ function setGraphBadge() {
   const connected = ['falkordb', 'sqlite-graph'].includes(state.data.graph.mode);
   $('#graph-status').classList.toggle('connected', connected);
   $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FalkorDB' : connected ? 'SQLite graph' : 'Local graph';
+}
+
+// Four hops through the graph: a speaker you saved -> their session -> a shared
+// topic -> another session -> the person presenting it. This is the question a
+// flat list cannot answer, and it only gets asked once you have saved someone.
+async function loadAlsoMeet() {
+  const section = $('#also-meet');
+  const savedIds = [...state.saved].filter(id => !state.met.has(id));
+  if (!savedIds.length) { section.hidden = true; state.alsoMeet = []; return; }
+  try {
+    const response = await fetch('/api/also-meet', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ savedIds, metSpeakerIds: [...state.met] })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Lookup failed');
+    state.alsoMeet = data.speakers || [];
+    state.alsoMeetQuery = data.query;
+    state.alsoMeetRows = data.rows;
+    renderAlsoMeet();
+  } catch {
+    section.hidden = true;
+  }
+}
+
+function renderAlsoMeet() {
+  const section = $('#also-meet');
+  const list = $('#also-meet-list');
+  if (!state.alsoMeet.length) { section.hidden = true; return; }
+  section.hidden = false;
+  const anchors = [...new Set(state.alsoMeet.flatMap(item => item.viaSpeakers))];
+  $('#also-meet-count').textContent = `${state.alsoMeet.length} from your list`;
+  $('#also-meet-intro').textContent = `Because you saved ${anchors.join(' and ')}, the graph walked out to the people who present on the same topics.`;
+  list.innerHTML = state.alsoMeet.map(item => {
+    const saved = state.saved.has(item.speaker.id);
+    const session = item.relatedSessions[0];
+    return `<article class="also-card"><div><div class="person-name">${esc(item.speaker.name)}</div><div class="person-org">${esc(item.speaker.organization)}</div><div class="also-path"><b>${esc(item.viaSpeakers[0] || 'Your list')}</b> → ${esc(item.sharedTopics.join(' + '))} → <b>${esc(displayText(session?.title || 'their session'))}</b></div><div class="person-tags">${item.sharedTopics.slice(0, 3).map(topic => `<span>${esc(topic)}</span>`).join('')}</div></div><div class="person-actions"><span class="also-strength">${item.strength} shared topic${item.strength === 1 ? '' : 's'}</span><button class="meet-button ${saved ? 'saved' : ''}" data-save="${esc(item.speaker.id)}">${saved ? 'Saved' : 'Save speaker'}</button></div></article>`;
+  }).join('');
+  list.querySelectorAll('[data-save]').forEach(button => button.addEventListener('click', () => {
+    const id = button.dataset.save;
+    if (state.saved.has(id)) state.saved.delete(id); else state.saved.add(id);
+    persist();
+    renderPeople();
+    renderSavedPeople();
+    loadAlsoMeet();
+    toast(state.saved.has(id) ? 'Saved to your speaker list.' : 'Removed from your speaker list.');
+  }));
 }
 
 function renderGraph(result) {
@@ -445,6 +526,7 @@ async function boot() {
   renderPeople();
   renderResultCounts();
   renderGraphPlaceholder();
+  loadAlsoMeet();
   $('#graph-status').querySelector('span').textContent = state.data.graph.mode === 'falkordb' ? 'FalkorDB ready' : 'SQLite graph ready';
 }
 
@@ -455,6 +537,15 @@ $('#show-query').addEventListener('click', showQuery);
 $('#guide-nav').addEventListener('click', () => {
   $('#speaker-query').focus();
   $('#speaker-query').scrollIntoView({ block: 'center', behavior: 'smooth' });
+});
+$('#show-also-query').addEventListener('click', () => {
+  $('#query-provider').textContent = `${state.data.graph.mode === 'falkordb' ? 'FalkorDB graph' : 'SQLite graph'} · 4 hops`;
+  $('#query-code').textContent = state.alsoMeetQuery || 'Save a speaker to run this query.';
+  $('#graph-results').textContent = state.alsoMeet.length
+    ? `Matching paths:\n${state.alsoMeet.map(item => `${item.viaSpeakers.join(', ')} → ${item.sharedTopics.join(', ')} → ${item.relatedSessions.map(session => session.title).join('; ')} → ${item.speaker.name}`).join('\n')}`
+    : 'No four-hop paths yet.';
+  $('#graph-mode-detail').textContent = `${state.data.graph.detail} ${state.alsoMeetRows ?? 0} four-hop paths returned from the speakers you saved.`;
+  $('#query-dialog').showModal();
 });
 $('#close-query').addEventListener('click', () => $('#query-dialog').close());
 $('#close-source').addEventListener('click', () => $('#source-dialog').close());

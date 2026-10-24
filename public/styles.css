@@ -221,6 +221,20 @@ body.has-results .hero-art { height: 132px; }
 #query-code { overflow-x: auto; white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; }
 #graph-results { white-space: pre-wrap; }
 
+.also-meet { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
+.also-meet-intro { margin: 0 0 12px; max-width: 62ch; color: var(--muted); font-size: 13px; }
+.also-meet-list { display: grid; gap: 8px; }
+.also-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); background: #fbf8ec; }
+.also-path { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.also-path b { color: var(--ink); font-weight: 500; }
+.also-strength { color: var(--muted); font-size: 11px; }
+.also-meet-query { margin-top: 12px; width: auto; padding: 0 12px; }
+
+.enrich-button { display: inline-flex; align-items: center; min-height: 26px; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.enrich-pending { display: inline-flex; align-items: center; min-height: 26px; color: var(--muted); font-size: 12px; }
+.enrich-ok { display: inline-flex; align-items: center; min-height: 26px; max-width: 320px; overflow: hidden; color: #1d6b32; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; text-overflow: ellipsis; }
+.enrich-miss { display: inline-flex; align-items: center; min-height: 26px; color: var(--muted); font-size: 12px; font-style: italic; cursor: help; }
+
 @keyframes draw-thread { to { stroke-dashoffset: 0; } }
 @keyframes orbit-drift { to { transform: rotate(360deg); } }
 @keyframes person-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
@@ -265,6 +279,7 @@ body.has-results .hero-art { height: 132px; }
   .result-count { text-align: right; }
   .people-heading { margin-top: 28px; }
   .person-card { grid-template-columns: minmax(0, 1fr); }
+  .also-card { grid-template-columns: minmax(0, 1fr); }
   .person-actions { flex-direction: row; align-items: center; justify-content: flex-start; }
   .graph-visual { max-width: 420px; }
   /* On a phone the hero was costing a full screen before any result appeared. */
