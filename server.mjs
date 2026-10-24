@@ -89,10 +89,10 @@ try {
   if (storedRefresh) lastRefresh = JSON.parse(storedRefresh);
 } catch {}
 
-function sqliteSpeakerPaths(interestTopics, metSpeakerIds) {
+function sqliteSpeakerPathQuery(interestTopics, metSpeakerIds) {
   const topicsJson = sqlText(JSON.stringify(interestTopics));
   const metIdsJson = sqlText(JSON.stringify(metSpeakerIds));
-  return sqlite(`SELECT p.id AS speakerId,json_extract(p.properties,'$.name') AS speakerName,json_extract(p.properties,'$.organization') AS organization,
+  return `SELECT p.id AS speakerId,json_extract(p.properties,'$.name') AS speakerName,json_extract(p.properties,'$.organization') AS organization,
       group_concat(DISTINCT json_extract(t.properties,'$.name')) AS reasons,
       group_concat(DISTINCT s.id) AS sessionIds,count(DISTINCT t.id) AS pathCount
     FROM json_each(${topicsJson}) requested
@@ -102,8 +102,14 @@ function sqliteSpeakerPaths(interestTopics, metSpeakerIds) {
     JOIN graph_edges presents ON presents.from_id=s.id AND presents.relation='PRESENTS'
     JOIN graph_nodes p ON p.id=presents.to_id AND p.label='Speaker'
     WHERE p.id NOT IN (SELECT value FROM json_each(${metIdsJson}))
-    GROUP BY p.id ORDER BY pathCount DESC,p.id LIMIT 12;`, true);
+    GROUP BY p.id ORDER BY pathCount DESC,p.id LIMIT 12;`;
 }
+
+function sqliteSpeakerPaths(interestTopics, metSpeakerIds) {
+  return sqlite(sqliteSpeakerPathQuery(interestTopics, metSpeakerIds), true);
+}
+
+const FALKORDB_SPEAKER_PATH_QUERY = 'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) WHERE NOT p.id IN $met RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC, p.id LIMIT 12';
 
 async function initFalkorDB() {
   if (!process.env.FALKORDB_URL && !process.env.FALKORDB_HOST) return;
@@ -285,8 +291,8 @@ async function speakerPaths(interestTopics, metSpeakerIds) {
   if (!interestTopics.length) return [];
   if (!graph) return sqliteSpeakerPaths(interestTopics, metSpeakerIds);
   const result = await graph.query(
-    'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) RETURN p.id AS speakerId, p.name AS speakerName, p.organization AS organization, collect(DISTINCT t.name) AS reasons, collect(DISTINCT s.id) AS sessionIds, count(DISTINCT t) AS pathCount ORDER BY pathCount DESC LIMIT 12',
-    { params: { topics: interestTopics } }
+    FALKORDB_SPEAKER_PATH_QUERY,
+    { params: { topics: interestTopics, met: metSpeakerIds } }
   );
   const rows = result.data || result.result_set || [];
   const met = new Set(metSpeakerIds);
@@ -357,12 +363,6 @@ async function refreshWithBrightData() {
   });
   const sections = result.split(/(?=^#{2,3}\s)/m);
   const verifiedAt = new Date().toISOString();
-  // A successful fetch is a replacement snapshot, so unmatched sessions lose old live claims.
-  for (const session of seed.sessions) {
-    delete session.liveSourceExcerpt;
-    delete session.sourceVerifiedAt;
-  }
-  sqlite("UPDATE graph_nodes SET properties=json_remove(properties,'$.liveSourceExcerpt','$.sourceVerifiedAt') WHERE label='Session';");
   const scrapedRecords = matches.map(session => {
     const title = normalizeText(session.title);
     const section = sections.find(candidate => normalizeText(candidate).includes(title)) || '';
@@ -373,15 +373,30 @@ async function refreshWithBrightData() {
       .replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;|&amp;|&quot;|&#39;|&apos;/g, ' ')
       .replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1400);
-    session.liveSourceExcerpt = excerpt;
-    session.sourceVerifiedAt = verifiedAt;
-    upsertNode(session.id, 'Session', session);
     return { sessionId: session.id, title: session.title, excerpt, sourceUrl: seed.source.url };
   });
   const found = matches.map(session => session.id);
-  lastRefresh = { at: verifiedAt, target: seed.source.name, sourceUrl: seed.source.url, returnedChars: result.length, foundSessions: found.length, foundSessionIds: found, extractedRecords: scrapedRecords.length };
-  sqlite(`INSERT INTO app_metadata(key,value) VALUES('live_scraped_records',${sqlText(JSON.stringify(scrapedRecords))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
-  sqlite(`INSERT INTO app_metadata(key,value) VALUES('last_brightdata_refresh',${sqlText(JSON.stringify(lastRefresh))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+  const nextRefresh = { at: verifiedAt, target: seed.source.name, sourceUrl: seed.source.url, returnedChars: result.length, foundSessions: found.length, foundSessionIds: found, extractedRecords: scrapedRecords.length };
+  const snapshotSql = [
+    '.bail on',
+    'BEGIN IMMEDIATE;',
+    "UPDATE graph_nodes SET properties=json_remove(properties,'$.liveSourceExcerpt','$.sourceVerifiedAt') WHERE label='Session';",
+    ...scrapedRecords.map(record => `UPDATE graph_nodes SET properties=json_patch(properties,${sqlText(JSON.stringify({ liveSourceExcerpt: record.excerpt, sourceVerifiedAt: verifiedAt }))}) WHERE id=${sqlText(record.sessionId)} AND label='Session';`),
+    `INSERT INTO app_metadata(key,value) VALUES('live_scraped_records',${sqlText(JSON.stringify(scrapedRecords))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
+    `INSERT INTO app_metadata(key,value) VALUES('last_brightdata_refresh',${sqlText(JSON.stringify(nextRefresh))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
+    'COMMIT;'
+  ].join('\n');
+  sqlite(snapshotSql);
+  for (const session of seed.sessions) {
+    delete session.liveSourceExcerpt;
+    delete session.sourceVerifiedAt;
+  }
+  for (const record of scrapedRecords) {
+    const session = seed.sessions.find(item => item.id === record.sessionId);
+    session.liveSourceExcerpt = record.excerpt;
+    session.sourceVerifiedAt = verifiedAt;
+  }
+  lastRefresh = nextRefresh;
   return {
     ok: true,
     configured: true,
@@ -436,13 +451,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/graph-query') {
       const { matchedTopics, metSpeakerIds } = profileAndMatches(await bodyJson(req));
-      const cypher = 'UNWIND $topics AS topicName MATCH (t:Topic {name:topicName})<-[:COVERS]-(s:Session)-[:PRESENTS]->(p:Speaker) RETURN p.name, t.name, s.title ORDER BY p.name';
       const rows = await speakerPaths(matchedTopics, metSpeakerIds);
       return send(res, 200, {
         graphMode: graphState.mode,
         graph: graphName,
         detail: graphState.detail,
-        query: graph ? `${cypher}\nParameters: topics = ${JSON.stringify(matchedTopics)}` : `SQLite graph path query: requested topics → sessions → speakers, excluding met speaker IDs. Topics: ${JSON.stringify(matchedTopics)}`,
+        query: graph
+          ? `${FALKORDB_SPEAKER_PATH_QUERY}\nParameters: topics = ${JSON.stringify(matchedTopics)}, met = ${JSON.stringify(metSpeakerIds)}`
+          : sqliteSpeakerPathQuery(matchedTopics, metSpeakerIds),
         rows: rows.length
       });
     }
@@ -452,6 +468,7 @@ const server = http.createServer(async (req, res) => {
     const data = await readFile(path);
     return send(res, 200, data, mimeTypes[extname(path)] || 'application/octet-stream');
   } catch (error) {
+    if (!error.status) console.error('Request failed', req.method, url.pathname, error);
     return send(res, error.status || 500, { error: error.status ? error.message : 'Unexpected server error' });
   }
 });
