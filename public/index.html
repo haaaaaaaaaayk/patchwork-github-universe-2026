@@ -4,15 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#ffffff" />
-    <title>Patchwork: Make the rooms between talks count</title>
+    <title>Patchwork: Find your people at GitHub Universe</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="rail">
         <a class="brand" href="#top" aria-label="Patchwork home"><span class="brand-mark">p</span><span>patchwork</span></a>
-        <button class="rail-item active" aria-label="Conference guide">Conference guide</button>
-        <button class="rail-item" id="saved-nav" aria-label="Saved speakers, 0 saved"><span>Saved speakers</span><span class="rail-count" id="saved-count" aria-hidden="true">0</span></button>
+        <nav class="rail-nav" aria-label="Sections">
+        <button class="rail-item active" id="guide-nav">Conference guide</button>
+        <button class="rail-item" id="saved-nav" aria-label="Your list: 0 speakers to meet, 0 already met"><span>Your list</span><span class="rail-count" id="saved-count" aria-hidden="true">0</span></button>
+        </nav>
       </aside>
 
       <main class="main" id="top">
@@ -21,7 +24,7 @@
         </header>
 
         <section class="hero">
-          <div class="hero-copy"><p class="eyebrow">A field guide for the people between talks</p><h1>Missed a talk?<br />Keep the thread.</h1><p>Choose a session. Get a source-linked catch-up, a speaker connected to your interests, and a question to start the conversation.</p>
+          <div class="hero-copy"><p class="eyebrow">A field guide to GitHub Universe speakers</p><h1>Find your people<br />at Universe.</h1><p>Search what you care about. Patchwork fetches public speaker and session pages live, then traces the best-fit speakers back to the work they’re presenting.</p>
             <div class="hero-meta"><span id="event-date">October 28 and 29, 2026</span><span id="event-location">Fort Mason Center, San Francisco</span></div>
           </div>
           <div class="hero-art" aria-hidden="true">
@@ -50,41 +53,42 @@
           </div>
         </section>
 
-        <section class="profile-strip">
-          <div class="profile-text"><strong>Your profile</strong><span>Your interests shape your catch-up and speaker suggestions. Saved in this browser.</span></div>
-          <div class="profile-inputs"><label class="profile-field" for="profile-name">Your name<input id="profile-name" value="You" placeholder="For example, Hayk" /></label><label class="profile-field" for="profile-interests">Topics you care about<input id="profile-interests" value="secure MCP agents, model evaluation, agent harnesses" placeholder="MCP security, model evaluation, agents" /></label><button id="save-profile" class="save-button">Save</button></div>
+        <section class="profile-strip speaker-search-strip">
+          <div class="profile-text"><strong>What are you into?</strong><span>Patchwork matches your words to the topics in this catalog, then fetches the live pages.</span></div>
+          <form class="speaker-search-form" id="speaker-search-form"><label class="profile-field" for="speaker-query">Find speakers by topic<input id="speaker-query" placeholder="Design, open source, agent harnesses" /></label><button id="refresh-data" class="save-button" type="submit">Fetch and find</button></form>
+          <p class="live-search-status" id="live-search-status" role="status" aria-live="polite">Ready to fetch GitHub’s public speaker and schedule pages.</p>
         </section>
 
         <section class="workspace-grid">
           <div class="primary-column">
-            <div class="section-heading"><div><h2>1. Catch up on a session</h2></div></div>
-            <div class="catchup-card">
-              <label class="field-label" for="session-select">Missed session</label>
+            <div class="section-heading"><h2>Speakers connected to your topic</h2><span class="result-count" id="live-result-count">Search to see live matches</span></div>
+            <div class="people-list" id="people-list"></div>
+            <section class="session-explorer" aria-labelledby="explorer-heading">
+              <div class="section-heading"><h2 id="explorer-heading">Catch up on a talk you missed</h2><span class="result-count" id="session-count"></span></div>
+              <div class="catchup-card">
+              <label class="field-label" for="session-select">Choose a session</label>
               <div class="select-wrap"><select id="session-select"></select><span class="select-chevron">⌄</span></div>
               <div class="catchup-content" id="catchup-content"></div>
-              <div class="card-bottom"><a id="session-source-link" href="#" target="_blank" rel="noreferrer">Open session source</a><span id="catchup-coverage">Published description</span></div>
-            </div>
-
-            <div class="section-heading people-heading"><h2>2. Find a speaker</h2><button class="text-button" id="refresh-recs">Refresh</button></div>
-            <div class="people-list" id="people-list"></div>
+              <div class="card-bottom"><a id="session-source-link" href="#" target="_blank" rel="noreferrer">Open session source</a><span id="catchup-coverage">From the published description</span></div>
+              </div>
+            </section>
           </div>
 
           <aside class="side-column">
             <div class="graph-card">
-              <div class="graph-heading"><div><h3>Why this match</h3></div><span class="graph-live" id="graph-status"><span>Local graph</span></span></div>
+              <div class="graph-heading"><div><h3>Match map</h3></div><span class="graph-live" id="graph-status"><span>Graph ready</span></span></div>
               <div class="graph-visual" id="graph-visual"></div>
-              <div class="graph-explainer" id="graph-explainer">Your interests connect to sessions, then to the people who present them. Every match has a reason.</div>
-              <button class="graph-query-button" id="show-query">View graph query</button>
+              <div class="graph-explainer" id="graph-explainer">Run a graph query with any topic above. You can inspect the actual speaker paths before fetching live sources.</div>
+              <button class="graph-query-button" id="show-query">Run graph query</button>
             </div>
 
             <div class="sources-card">
-              <div class="sources-head"><h3>Source data</h3></div>
-              <p>Bright Data fetches GitHub’s talk roundup.</p>
-              <button class="bright-button" id="refresh-data">Refresh</button>
-              <div class="refresh-result" id="refresh-result">Run a live source refresh.</div>
-          <div class="source-list"><a id="source-link" href="#" target="_blank" rel="noreferrer">GitHub talk roundup</a><a id="catalog-link" href="#" target="_blank" rel="noreferrer">Session catalog</a></div>
+              <div class="sources-head"><h3>Live public sources</h3></div>
+              <p>Bright Data fetches the official event site and GitHub’s schedule announcement on each search.</p>
+              <div class="refresh-result" id="refresh-result">No live fetch yet.</div>
+          <div class="source-list"><a id="source-link" href="https://githubuniverse.com/" target="_blank" rel="noreferrer">GitHub Universe speakers</a><a id="catalog-link" href="#" target="_blank" rel="noreferrer">Official schedule article</a></div>
             </div>
-            <div class="privacy-note"><p>Suggestions are public speakers from the schedule. Attendee matching is opt-in.</p></div>
+            <div class="privacy-note"><p>Public speakers only. Patchwork does not infer who is attending.</p></div>
           </aside>
         </section>
 
@@ -92,8 +96,8 @@
       </main>
     </div>
 
-    <dialog id="query-dialog" class="dialog"><div class="dialog-top"><div><span id="query-provider">SQLite graph</span><h3>Why this match</h3></div><button class="close-button" id="close-query" aria-label="Close">×</button></div><p class="dialog-intro">Interests connect to sessions and speakers. Your identity and saved list are not stored in the graph.</p><pre id="query-code"></pre><div class="dialog-foot" id="graph-mode-detail"></div></dialog>
-    <dialog id="source-dialog" class="dialog"><div class="dialog-top"><div><h3>Sources and privacy</h3></div><button class="close-button" id="close-source" aria-label="Close">×</button></div><p class="dialog-intro">Talk notes use published descriptions, not transcripts. Your profile stays in this browser. Bright Data receives the public GitHub URL and your API credential.</p><a class="dialog-source-link" id="dialog-source-link" href="#" target="_blank" rel="noreferrer">Open GitHub source</a></dialog>
+    <dialog id="query-dialog" class="dialog"><div class="dialog-top"><div><span id="query-provider">SQLite graph</span><h3>Graph query and matching paths</h3></div><button class="close-button" id="close-query" aria-label="Close">×</button></div><p class="dialog-intro">This runs against the local conference graph: topic → session → listed speaker. Your search text is not stored in the graph.</p><pre id="query-code"></pre><pre id="graph-results" class="graph-results"></pre><div class="dialog-foot" id="graph-mode-detail"></div></dialog>
+    <dialog id="source-dialog" class="dialog"><div class="dialog-top"><div><h3>Sources and privacy</h3></div><button class="close-button" id="close-source" aria-label="Close">×</button></div><p class="dialog-intro">Each speaker search fetches the public GitHub Universe site and schedule article through Bright Data. Only public conference sources are requested; your search topic stays in this local app.</p><a class="dialog-source-link" id="dialog-source-link" href="#" target="_blank" rel="noreferrer">Open GitHub Universe</a></dialog>
     <dialog id="saved-dialog" class="dialog"><div class="dialog-top"><div><h3>Speakers to meet</h3></div><button class="close-button" id="close-saved" aria-label="Close">×</button></div><div id="saved-people-list" class="saved-people-list"></div></dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js"></script>

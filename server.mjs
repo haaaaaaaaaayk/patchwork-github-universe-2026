@@ -22,7 +22,8 @@ const seed = JSON.parse(await readFile(resolve(root, 'data/seed.json'), 'utf8'))
 const port = Number(process.env.PORT || 4173);
 const graphName = 'conference_companion';
 const sqlitePath = resolve(root, 'data/patchwork.sqlite');
-const graphState = { mode: 'sqlite-graph', detail: 'Persistent SQLite graph database connected.' };
+const graphState = { mode: 'sqlite-graph', detail: 'Persistent SQLite graph database connected.', diagnostic: '' };
+let sqliteDetail = graphState.detail;
 let graph = null;
 let falkorClient = null;
 let lastRefresh = null;
@@ -80,7 +81,8 @@ function syncSqliteGraph() {
   const integrity = sqlite('PRAGMA integrity_check;');
   if (integrity !== 'ok') throw new Error(`SQLite integrity check failed: ${integrity}`);
   const counts = sqlite("SELECT (SELECT count(*) FROM graph_nodes) AS nodes,(SELECT count(*) FROM graph_edges) AS edges;", true)[0];
-  graphState.detail = `SQLite graph database verified (integrity_check=ok): ${counts.nodes} nodes and ${counts.edges} relationships persisted at data/patchwork.sqlite.`;
+  sqliteDetail = `SQLite graph database verified (integrity_check=ok): ${counts.nodes} nodes and ${counts.edges} relationships persisted at data/patchwork.sqlite.`;
+  graphState.detail = sqliteDetail;
 }
 
 syncSqliteGraph();
@@ -115,7 +117,8 @@ async function initFalkorDB() {
   if (!process.env.FALKORDB_URL && !process.env.FALKORDB_HOST) return;
   const url = process.env.FALKORDB_URL ? (() => { try { return new URL(process.env.FALKORDB_URL); } catch { return null; } })() : null;
   if (process.env.FALKORDB_URL && !url) {
-    graphState.detail = 'FALKORDB_URL is not a valid connection URL; refusing to connect.';
+    graphState.diagnostic = 'FALKORDB_URL is not a valid connection URL; refusing to connect.';
+    console.warn(graphState.diagnostic);
     return;
   }
   const configuredHost = process.env.FALKORDB_HOST || url?.hostname || '';
@@ -124,7 +127,8 @@ async function initFalkorDB() {
   const urlUsesTls = url?.protocol === 'rediss:';
   const tlsEnabled = process.env.FALKORDB_TLS === 'true' || urlUsesTls;
   if (!isLoopback && !tlsEnabled && process.env.FALKORDB_ALLOW_INSECURE !== 'true') {
-    graphState.detail = 'Refusing a remote FalkorDB connection without TLS, including FALKORDB_URL connections. Enable TLS or explicitly opt in after reviewing the risk.';
+    graphState.diagnostic = 'Refusing a remote FalkorDB connection without TLS, including FALKORDB_URL connections. Enable TLS or explicitly opt in after reviewing the risk.';
+    console.warn(graphState.diagnostic);
     return;
   }
   try {
@@ -180,11 +184,12 @@ async function initFalkorDB() {
       .replaceAll(process.env.FALKORDB_PASSWORD || '\u0000', '[redacted]')
       .replaceAll(process.env.FALKORDB_URL || '\u0000', '[endpoint]')
       .slice(0, 180);
-    graphState.detail = `FalkorDB connection or seed check failed (${reason}); using the persistent SQLite graph database verified at startup.`;
+    // Keep the SQLite detail the UI shows; the FalkorDB reason is for the operator's log.
+    graphState.detail = sqliteDetail;
+    graphState.diagnostic = `Optional FalkorDB connection unavailable (${reason}). Serving the persistent SQLite graph instead.`;
+    console.warn(graphState.diagnostic);
   }
 }
-
-await initFalkorDB();
 
 function send(res, status, body, type = 'application/json; charset=utf-8') {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
@@ -255,20 +260,42 @@ function overlapScore(a, b) {
   return n;
 }
 
-function findTopicMatches(text) {
-  return seed.topics.filter(topic => overlapScore(text, topic) > 0 || topicTerms[topic]?.some(term => String(text).toLowerCase().includes(term)));
-}
-
+// Terms are matched on word boundaries, so short ones like "ai" or "ux" cannot
+// fire inside unrelated words ("explain", "flux").
 const topicTerms = {
-  'Agent harnesses': ['agent', 'harness', 'agents', 'delegat'],
-  'MCP security': ['mcp', 'security', 'secure', 'authorization', 'permission'],
-  'Model evaluation': ['evaluation', 'evaluat', 'benchmark', 'model', 'regression'],
-  'AI adoption': ['adoption', 'adopt', 'fluency', 'enterprise'],
-  'Open source': ['open source', 'opensource', 'maintainer'],
-  'Developer workflows': ['workflow', 'developer', 'pull request', 'copilot', 'coding'],
-  'Agent authorization': ['authorization', 'authz', 'identity', 'permission'],
-  'Community building': ['community', 'contributors', 'contribution']
+  'Agent harnesses': ['agent', 'agents', 'agentic', 'harness', 'harnesses', 'delegate', 'delegating', 'delegation', 'autonomy', 'autonomous', 'orchestration'],
+  'MCP security': ['mcp', 'security', 'secure', 'supply chain', 'vulnerability', 'threat', 'sandbox', 'secrets', 'npm', 'dependency', 'dependencies'],
+  'Model evaluation': ['eval', 'evals', 'evaluation', 'evaluations', 'evaluating', 'benchmark', 'benchmarks', 'benchmarking', 'model', 'models', 'llm', 'regression', 'testing', 'tests', 'quality', 'measurement', 'metrics'],
+  'AI adoption': ['ai', 'adoption', 'adopt', 'fluency', 'enterprise', 'rollout', 'training', 'onboarding', 'change management', 'machine learning', 'ml'],
+  'Open source': ['open source', 'opensource', 'oss', 'maintainer', 'maintainers', 'licensing', 'license', 'governance', 'foundation'],
+  'Developer workflows': ['workflow', 'workflows', 'developer', 'developers', 'devex', 'dx', 'developer experience', 'pull request', 'pull requests', 'code review', 'copilot', 'coding', 'ci', 'cd', 'devops', 'pipeline', 'pipelines', 'actions', 'tooling', 'toolchain', 'javascript', 'typescript', 'node', 'cli', 'productivity', 'debugging', 'incident', 'observability', 'rca'],
+  'Agent authorization': ['authorization', 'authz', 'auth', 'identity', 'permission', 'permissions', 'scopes', 'access control', 'oauth', 'tokens'],
+  'Community building': ['community', 'communities', 'contributor', 'contributors', 'contribution', 'contributions', 'mentorship', 'inclusion', 'accessibility', 'a11y', 'diversity', 'documentation', 'docs'],
+  'Design': ['design', 'designer', 'designers', 'ux', 'ui', 'user experience', 'product design', 'visual design', 'interface', 'interfaces', 'interaction', 'prototyping', 'usability', 'accessibility', 'a11y'],
+  'Creative coding': ['creative coding', 'creative', 'sketching', 'sketch', 'p5', 'p5.js', 'processing', 'creative technology', 'generative', 'art']
 };
+
+const termPattern = term => new RegExp(`(^|[^a-z0-9])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`, 'i');
+const compiledTopicTerms = Object.fromEntries(
+  Object.entries(topicTerms).map(([topic, terms]) => [topic, terms.map(termPattern)])
+);
+
+function findTopicMatches(text) {
+  const query = String(text || '');
+  const direct = seed.topics.filter(topic =>
+    overlapScore(query, topic) > 0 || compiledTopicTerms[topic]?.some(pattern => pattern.test(query))
+  );
+  if (direct.length) return direct;
+  // Nothing hit the curated vocabulary, so fall back to the catalog itself: any
+  // session whose title or summary overlaps the query lends Patchwork its topics.
+  const viaSessions = new Set();
+  for (const session of seed.sessions) {
+    if (overlapScore(query, `${session.title} ${session.summary}`) > 0) {
+      for (const topic of session.topics) viaSessions.add(topic);
+    }
+  }
+  return seed.topics.filter(topic => viaSessions.has(topic));
+}
 
 function profileAndMatches(payload) {
   const interests = String(payload.interests || '').slice(0, 500);
@@ -425,6 +452,121 @@ async function refreshWithBrightData() {
   };
 }
 
+const liveSpeakerSources = [
+  { name: 'GitHub Universe speaker page', url: seed.event.url },
+  { name: 'GitHub Universe schedule announcement', url: 'https://github.blog/news-insights/company-news/your-guide-to-github-universe-2026-is-here-the-schedule-just-launched/' }
+];
+
+function normalizeLiveText(value) {
+  return String(value || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9+.#]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+async function searchLiveSpeakers(payload) {
+  await loadLocalEnv();
+  const query = String(payload.query || '').trim().slice(0, 100);
+  if (!query) throw new HttpError(400, 'Enter a topic such as design, accessibility, or open source.');
+  const apiKey = process.env.BRIGHTDATA_API_KEY;
+  const zone = process.env.BRIGHTDATA_UNLOCKER_ZONE;
+  if (!apiKey || !zone) {
+    return { ok: false, configured: false, speakers: [], message: 'Bright Data is not configured. Set BRIGHTDATA_API_KEY and BRIGHTDATA_UNLOCKER_ZONE to fetch public speaker sources live.' };
+  }
+
+  // Topic matching is local, so resolve it before spending live fetches on a
+  // query the catalog cannot answer.
+  const recommendation = await recommend({ interests: query, metSpeakerIds: payload.metSpeakerIds });
+  if (!recommendation.speakers.length) {
+    return {
+      ok: true,
+      configured: true,
+      query,
+      matchedTopics: recommendation.matchedTopics,
+      speakers: [],
+      graphMode: graphState.mode,
+      skippedFetch: true,
+      suggestions: seed.topics,
+      sources: [],
+      fetchedAt: new Date().toISOString(),
+      message: recommendation.matchedTopics.length
+        ? `No speaker in the catalog is left for “${query}” — everyone on that path is already marked met.`
+        : `No conference topic matches “${query}”, so no live fetch was made. Try one of the ${seed.topics.length} topics in this catalog.`
+    };
+  }
+
+  const fetched = await Promise.all(liveSpeakerSources.map(async source => {
+    try {
+      const response = await fetch('https://api.brightdata.com/request', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ zone, url: source.url, format: 'raw', data_format: 'markdown' }),
+        signal: AbortSignal.timeout(35000)
+      });
+      const text = await response.text();
+      if (!response.ok) return { ...source, ok: false, error: `Bright Data returned HTTP ${response.status}`, text: '' };
+      return { ...source, ok: true, text, chars: text.length };
+    } catch (error) {
+      return { ...source, ok: false, error: error.name === 'TimeoutError' ? 'The source fetch timed out.' : 'The source could not be fetched.', text: '' };
+    }
+  }));
+  const successful = fetched.filter(source => source.ok);
+  if (!successful.length) {
+    return { ok: false, configured: true, speakers: [], sources: fetched.map(({ name, url, ok, error }) => ({ name, url, ok, error })), message: fetched.map(source => `${source.name}: ${source.error}`).join(' ') };
+  }
+
+  const corpus = normalizeLiveText(successful.map(source => source.text).join(' '));
+  const liveCandidates = recommendation.speakers.filter(match => {
+    const name = normalizeLiveText(match.speaker.name);
+    if (!name || !corpus.includes(name)) return false;
+    return match.relatedSessions.some(related => {
+      const session = seed.sessions.find(item => item.id === related.id);
+      return session && corpus.includes(normalizeLiveText(session.title));
+    });
+  }).map(match => {
+    const relatedSessions = match.relatedSessions.map(related => {
+      const session = seed.sessions.find(item => item.id === related.id);
+      return session ? { ...related, sourceUrl: session.sourceUrl || seed.event.url } : related;
+    });
+    return { ...match, relatedSessions, liveVerified: true };
+  });
+
+  const verifiedAt = new Date().toISOString();
+  for (const match of liveCandidates) {
+    upsertNode(match.speaker.id, 'Speaker', { sourceVerifiedAt: verifiedAt, verifiedSourceUrls: successful.map(source => source.url) });
+    if (graph) {
+      await graph.query('MATCH (p:Speaker {id:$id}) SET p.sourceVerifiedAt=$at, p.verifiedSourceUrls=$urls', {
+        params: { id: match.speaker.id, at: verifiedAt, urls: successful.map(source => source.url) }
+      });
+    }
+  }
+  const searchMetadata = {
+    at: verifiedAt,
+    sources: successful.map(source => ({ name: source.name, url: source.url, returnedChars: source.chars })),
+    verifiedSpeakerIds: liveCandidates.map(match => match.speaker.id)
+  };
+  sqlite(`INSERT INTO app_metadata(key,value) VALUES('last_live_speaker_search',${sqlText(JSON.stringify(searchMetadata))}) ON CONFLICT(key) DO UPDATE SET value=excluded.value;`);
+  return {
+    ok: true,
+    configured: true,
+    query,
+    matchedTopics: recommendation.matchedTopics,
+    speakers: liveCandidates,
+    graphMode: graphState.mode,
+    graphDetail: graphState.detail,
+    fetchedAt: verifiedAt,
+    graphCandidates: recommendation.speakers.length,
+    suggestions: seed.topics,
+    sources: fetched.map(({ name, url, ok, error, chars }) => ({ name, url, ok, ...(error ? { error } : {}), ...(chars ? { chars } : {}) })),
+    message: `${successful.length} public GitHub Universe source${successful.length === 1 ? '' : 's'} fetched live through Bright Data. ${liveCandidates.length} of ${recommendation.speakers.length} graph candidate${recommendation.speakers.length === 1 ? '' : 's'} confirmed by name and session title in the live pages.`
+  };
+}
+
 const staticRoot = resolve(root, 'public');
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
 
@@ -439,13 +581,26 @@ const server = http.createServer(async (req, res) => {
         topics: seed.topics,
         sessions: readGraphRecords('Session'),
         speakers: readGraphRecords('Speaker'),
-        graph: graphState,
+        graph: { mode: graphState.mode, detail: graphState.detail },
         lastRefresh,
         brightDataConfigured: Boolean(process.env.BRIGHTDATA_API_KEY && process.env.BRIGHTDATA_UNLOCKER_ZONE)
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/recommend') {
       return send(res, 200, await recommend(await bodyJson(req)));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/speakers/search') {
+      const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+      let allowedOrigin = false;
+      try {
+        const originUrl = new URL(req.headers.origin || '');
+        const allowedHost = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(originUrl.hostname.toLowerCase());
+        allowedOrigin = originUrl.protocol === 'http:' && allowedHost && originUrl.host === req.headers.host;
+      } catch {}
+      if (!['127.0.0.1', '::1'].includes(remoteAddress) || !allowedOrigin) {
+        return send(res, 403, { error: 'Live speaker search is available only from this local app.' });
+      }
+      return send(res, 200, await searchLiveSpeakers(await bodyJson(req)));
     }
     if (req.method === 'POST' && url.pathname === '/api/refresh') {
       const remoteAddress = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
@@ -464,32 +619,58 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await refreshWithBrightData());
     }
     if (req.method === 'POST' && url.pathname === '/api/graph-query') {
-      const { matchedTopics, metSpeakerIds } = profileAndMatches(await bodyJson(req));
+      const { interests, matchedTopics, metSpeakerIds } = profileAndMatches(await bodyJson(req));
       const rows = await speakerPaths(matchedTopics, metSpeakerIds);
+      const speakers = rows.map(row => {
+        const [speakerId, speakerName, organization, reasons, sessionIds] = Array.isArray(row)
+          ? row
+          : [row.speakerId, row.speakerName, row.organization, row.reasons, row.sessionIds];
+        const ids = Array.isArray(sessionIds) ? sessionIds : String(sessionIds || '').split(',').filter(Boolean);
+        return {
+          speaker: seed.speakers.find(item => item.id === speakerId) || { id: speakerId, name: speakerName, organization },
+          reasons: Array.isArray(reasons) ? reasons : String(reasons || '').split(',').filter(Boolean),
+          relatedSessions: ids.map(id => seed.sessions.find(session => session.id === id)).filter(Boolean).map(session => ({ id: session.id, title: session.title, sourceUrl: session.sourceUrl || seed.event.url }))
+        };
+      });
       return send(res, 200, {
         graphMode: graphState.mode,
         graph: graphName,
         detail: graphState.detail,
+        matchedTopics,
+        interests,
+        speakers,
+        suggestions: seed.topics,
         query: graph
           ? `${FALKORDB_SPEAKER_PATH_QUERY}\nParameters: topics = ${JSON.stringify(matchedTopics)}, met = ${JSON.stringify(metSpeakerIds)}`
           : sqliteSpeakerPathQuery(matchedTopics, metSpeakerIds),
         rows: rows.length
       });
     }
+    if (url.pathname.startsWith('/api/')) return send(res, 404, { error: `No API route matches ${req.method} ${url.pathname}.` });
     const relative = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
     const path = resolve(staticRoot, `.${relative}`);
     if (!path.startsWith(staticRoot + sep) && path !== resolve(staticRoot, 'index.html')) return send(res, 403, 'Forbidden', 'text/plain; charset=utf-8');
-    const data = await readFile(path);
+    const data = await readFile(path).catch(error => {
+      // A missing or unreadable static file is a 404, not a server fault.
+      if (['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code)) throw new HttpError(404, 'Not found');
+      throw error;
+    });
     return send(res, 200, data, mimeTypes[extname(path)] || 'application/octet-stream');
   } catch (error) {
     if (!error.status) console.error('Request failed', req.method, url.pathname, error);
+    if (error.status === 404 && !url.pathname.startsWith('/api/')) return send(res, 404, 'Not found', 'text/plain; charset=utf-8');
     return send(res, error.status || 500, { error: error.status ? error.message : 'Unexpected server error' });
   }
 });
 
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Conference Companion is running at http://127.0.0.1:${port}`);
+  console.log(`Patchwork is running at http://127.0.0.1:${port}`);
   console.log(graphState.detail);
+  // FalkorDB is optional and can take ~10s to time out, so connect after the port is open.
+  // Requests served before it resolves use the SQLite graph, which is already verified.
+  initFalkorDB().then(() => {
+    if (graphState.mode === 'falkordb') console.log(graphState.detail);
+  });
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
