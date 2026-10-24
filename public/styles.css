@@ -246,11 +246,20 @@ body.has-results .hero-art { height: 132px; }
   .hero-meta { gap: 8px 14px; }
   .hero-copy { max-width: 100%; }
   .hero-art { flex: none; width: 100%; min-width: 0; height: 210px; }
-  .profile-strip { display: block; margin-bottom: 24px; }
+  .profile-strip { display: block; margin-bottom: 18px; padding: 12px 14px; }
   .profile-inputs { display: grid; grid-template-columns: 1fr; margin-top: 12px; }
   .save-button { justify-self: start; }
-  .speaker-search-form { grid-template-columns: 1fr; margin-top: 12px; }
-  .live-search-status { margin-top: 8px; }
+  /* Keep the button beside the field so the search block stays one row tall. */
+  .speaker-search-form { grid-template-columns: minmax(0, 1fr) auto; margin-top: 10px; gap: 8px; }
+  .live-search-status { margin-top: 6px; }
+  /* The intro copy has done its job once results are on screen. */
+  body.has-results .speaker-search-strip .profile-text span { display: none; }
+  body.has-results .profile-strip { margin-bottom: 14px; }
+  /* Brand and nav share one row instead of stacking. */
+  .rail { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .brand { margin: 0; margin-right: auto; }
+  .rail-nav { display: flex; gap: 6px; }
+  .rail-item { min-height: 34px; margin-right: 0; }
   .workspace-grid { grid-template-columns: 1fr; }
   .section-heading h2 { font-size: 22px; }
   .result-count { text-align: right; }
