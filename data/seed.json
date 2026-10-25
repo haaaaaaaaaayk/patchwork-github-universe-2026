@@ -21,7 +21,9 @@
     "Open source",
     "Developer workflows",
     "Agent authorization",
-    "Community building"
+    "Community building",
+    "Design",
+    "Creative coding"
   ],
   "speakers": [
     {
@@ -216,6 +218,22 @@
       "sessionIds": [
         "agent-skills"
       ]
+    },
+    {
+      "id": "qianqian-ye",
+      "name": "Qianqian Ye",
+      "organization": "Processing Foundation / University of Southern California",
+      "sessionIds": [
+        "sketching-code"
+      ]
+    },
+    {
+      "id": "john-maeda",
+      "name": "John Maeda",
+      "organization": "Microsoft",
+      "sessionIds": [
+        "sketching-code"
+      ]
     }
   ],
   "sessions": [
@@ -279,11 +297,29 @@
       "topics": [
         "Open source",
         "Community building",
-        "Developer workflows"
+        "Developer workflows",
+        "Design"
       ],
       "summary": "A look at how Home Assistant handles ideas, UX, architecture, and roadmap decisions in the open across 20,000 contributors and a dozen GitHub organizations.",
       "sourceId": "github-universe-preview",
       "sourceAnchor": "code-is-the-easy-part-building-home-assistant-in-the-open",
+      "sessionUrl": "https://reg.githubuniverse.com/flow/github/universe26/attendee-portal/page/sessioncatalog",
+      "sourceUrl": "https://github.blog/news-insights/company-news/your-guide-to-github-universe-2026-is-here-the-schedule-just-launched/"
+    },
+    {
+      "id": "sketching-code",
+      "title": "Why sketching in code matters more in the age of AI",
+      "speakers": [
+        "qianqian-ye",
+        "john-maeda"
+      ],
+      "topics": [
+        "Design",
+        "Creative coding"
+      ],
+      "summary": "Qianqian Ye draws on teaching creative coding at USC and leading p5.js to show why sketching and thinking in code builds intuition to shape systems, not just prompt them.",
+      "sourceId": "github-universe-preview",
+      "sourceAnchor": "why-sketching-in-code-matters-more-in-the-age-of-ai",
       "sessionUrl": "https://reg.githubuniverse.com/flow/github/universe26/attendee-portal/page/sessioncatalog",
       "sourceUrl": "https://github.blog/news-insights/company-news/your-guide-to-github-universe-2026-is-here-the-schedule-just-launched/"
     },
